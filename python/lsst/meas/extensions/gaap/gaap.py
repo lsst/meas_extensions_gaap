@@ -38,22 +38,24 @@ from lsst.ip.diffim import modelPsfMatch#, ModelPsfMatchConfig
 from lsst.afw.geom.skyWcs import makeWcsPairTransform
 from lsst.meas.base.wrappers import WrappedSingleFramePlugin, WrappedForcedPlugin
 
+# from .gaapFlux import GaapFluxAlgorithm, GaapFluxControl, GaapFluxTransform
+
 __all__ = ("GaapFluxPlugin", "GaapFluxConfig", "ForcedGaapFluxPlugin", "ForcedGaapFluxConfig")
 
 SIGMA_TO_FWHM = 2.0*math.sqrt(2.0*(math.log(2.0)))
 PLUGIN_NAME = "ext_gaap_GaapFlux"
 
-GaussianFluxConfig = makeConfigClass(lsst.meas.base.GaussianFluxControl)
+GaapFluxConfig = makeConfigClass(GaapFluxControl)
 
 class GaapFluxData(Struct):
     def __init__(self, name, schema, seeing, config, metadata):
-        aperture = lsst.meas.base.GaussianFluxAlgorithm(config.aperture.makeControl(), name, schema)
+        aperture = lsst.meas.base.GaapFluxAlgorithm(config.aperture.makeControl(), name, schema)
         Struct.__init__(self, aperture=aperture)
 
 class BaseGaapFluxConfig(ModelPsfMatchConfig):
     seeing = ListField(dtype=float, default=[3,5, 5.0, 6.5], doc="list of target seeings (FWHM, pixels)")
 
-    aperture = ConfigField(dtype=GaussianFluxConfig, doc="Gaussian photometry parameters")
+    aperture = ConfigField(dtype=GaapFluxConfig, doc="Gaussian photometry parameters")
     #psfMatchKernel = ConfigChoiceField(
     #                                   doc="kernel type",
     #                                   typemap=dict(
@@ -91,7 +93,7 @@ class BaseGaapFluxPlugin(lsst.meas.base.BaseMeasurementPlugin):
         flagDefs = lsst.meas.base.FlagDefinitionList()
         flagDefs.addFailureFlag("error in running ConvolvedFluxPlugin")
         self.flagHandler = lsst.meas.base.FlagHandler.addFields(schema, name, flagDefs)
-        self.gaussianAperture = lsst.meas.base.GaussianFluxAlgorithm(config.aperture.makeControl(), 'ArunsGaussFlux'+name, schema)
+        self.gaussianAperture = lsst.meas.base.GaapFluxAlgorithm(config.aperture.makeControl(), 'GaapFlux'+name, schema)
 
     def convolve(self, exposure, modelPsf, footprint, maxRadius):
         """ Convolve
@@ -171,7 +173,7 @@ class BaseGaapFluxPlugin(lsst.meas.base.BaseMeasurementPlugin):
             Record for source to be measured.
         exposure : `lsst.afw.image.Exposure`
             Image to be measured.
-        aperturePhot : `lsst.meas.base.GaussianFluxAlgorithm`
+        aperturePhot : `lsst.meas.base.GaapFluxAlgorithm`
             Measurement plugin that will do the measurement.
         """
         try:
