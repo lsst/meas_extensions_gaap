@@ -38,7 +38,7 @@ from lsst.ip.diffim import modelPsfMatch#, ModelPsfMatchConfig
 from lsst.afw.geom.skyWcs import makeWcsPairTransform
 from lsst.meas.base.wrappers import WrappedSingleFramePlugin, WrappedForcedPlugin
 
-# from .gaapFlux import GaapFluxAlgorithm, GaapFluxControl, GaapFluxTransform
+from .gaapFlux import GaapFluxAlgorithm, GaapFluxControl, GaapFluxTransform
 
 __all__ = ("GaapFluxPlugin", "GaapFluxConfig", "ForcedGaapFluxPlugin", "ForcedGaapFluxConfig")
 
@@ -121,6 +121,7 @@ class BaseGaapFluxPlugin(lsst.meas.base.BaseMeasurementPlugin):
         subExposure = afwImage.ExposureF(subImage)
         subExposure.setPsf(origPsf)
         result = modelPsfMatch.ModelPsfMatchTask(config=self.config).run(exposure=subExposure, referencePsfModel=modelPsf)
+        # TODO: DM-27407 will re-Gaussianize the exposure to make the PSF even more Gaussian
         convolved = result.psfMatchedExposure
         convolved.image.array[np.isnan(convolved.image.array)] = 0. ## HACK ALERT
         return convolved

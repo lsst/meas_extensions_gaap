@@ -40,16 +40,18 @@ namespace gaap {
 
 namespace {
 
-/*
+
 using PyFluxAlgorithm =
         py::class_<GaapFluxAlgorithm, std::shared_ptr<GaapFluxAlgorithm>, base::SimpleAlgorithm>;
 using PyFluxControl = py::class_<GaapFluxControl>;
-*/
+
 using PyFluxTransform =
         py::class_<GaapFluxTransform, std::shared_ptr<GaapFluxTransform>, base::BaseTransform>;
 
 void declareGaapFluxControl(py::module &mod) {
-    py::class_<GaapFluxControl> cls(mod, "GaapFluxControl");
+    PyFluxControl cls(mod, "GaapFluxControl");
+
+    cls.def(py::init<>());
 
     LSST_DECLARE_CONTROL_FIELD(cls, GaapFluxControl, background);
     LSST_DECLARE_CONTROL_FIELD(cls, GaapFluxControl, sigma);
@@ -58,7 +60,8 @@ void declareGaapFluxControl(py::module &mod) {
     LSST_DECLARE_CONTROL_FIELD(cls, GaapFluxControl, iyy);
     LSST_DECLARE_CONTROL_FIELD(cls, GaapFluxControl, ixy);
 
-    cls.def(py::init<>());
+  //  cls.def(py::init<>());
+
     // cls.def_property("shape",
     //                 py::cpp_function([](GaapFluxControl &c){return 0;}, py::keep_alive<0, 1>()),
     //                 py::cpp_function([](GaapFluxControl &c, std::vector<double> &v){c.shape = v;})
@@ -66,7 +69,7 @@ void declareGaapFluxControl(py::module &mod) {
 }
 
 void declareGaapFluxAlgorithm(py::module &mod) {
-    py::class_<GaapFluxAlgorithm, std::shared_ptr<GaapFluxAlgorithm>, base::SimpleAlgorithm> cls(
+    PyFluxAlgorithm cls(
             mod, "GaapFluxAlgorithm");
     cls.def_static("getFlagDefinitions", &GaapFluxAlgorithm::getFlagDefinitions,
                    py::return_value_policy::copy);

@@ -102,6 +102,7 @@ private:
     base::FlagHandler _flagHandler;
     base::SafeCentroidExtractor _centroidExtractor;
     base::SafeShapeExtractor _shapeExtractor;
+    base::SafeShapeExtractor _psfShapeExtractor;
 };
 
 class GaapFluxTransform : public base::FluxTransform {
