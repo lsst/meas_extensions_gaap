@@ -21,24 +21,23 @@
 #
 
 import math
-from lsst.ip.diffim.modelPsfMatch import ModelPsfMatchConfig
-from lsst.ip.diffim.psfMatch import PsfMatchConfigDF
-import numpy as np
-import time
+import os
 
-from lsst.pex.config import Config, Field, ListField, ConfigField, ConfigChoiceField, makeConfigClass
-from lsst.pipe.base import Struct
-from lsst.meas.base.wrappers import WrappedSingleFramePlugin, WrappedForcedPlugin
-
-import lsst.meas.base
-import lsst.meas.algorithms as measAlg
-import lsst.afw.math as afwMath
 import lsst.afw.image as afwImage
-from lsst.ip.diffim import modelPsfMatch#, ModelPsfMatchConfig
+import lsst.meas.algorithms as measAlg
+import lsst.meas.base
+import numpy as np
 from lsst.afw.geom.skyWcs import makeWcsPairTransform
-from lsst.meas.base.wrappers import WrappedSingleFramePlugin, WrappedForcedPlugin
+from lsst.ip.diffim import modelPsfMatch
+from lsst.ip.diffim.modelPsfMatch import ModelPsfMatchConfig
+from lsst.meas.base.wrappers import (WrappedForcedPlugin,
+                                     WrappedSingleFramePlugin)
+from lsst.pex.config import ConfigField, Field, ListField, makeConfigClass
 
+# os.environ['LD_LIBRARY_PATH'] += ':/home/kannawad/repo/meas_extensions_gaap/lib'
 from .gaapFlux import GaapFluxAlgorithm, GaapFluxControl, GaapFluxTransform
+
+# from lsst.meas.extensions.gaap.gaapFlux import GaapFluxAlgorithm, GaapFluxControl, GaapFluxTransform
 
 __all__ = ("GaapFluxPlugin", "GaapFluxConfig", "ForcedGaapFluxPlugin", "ForcedGaapFluxConfig")
 
@@ -47,55 +46,46 @@ PLUGIN_NAME = "ext_gaap_GaapFlux"
 
 GaapFluxConfig = makeConfigClass(GaapFluxControl)
 
-class GaapFluxData(Struct):
-    def __init__(self, name, schema, seeing, config, metadata):
-        aperture = lsst.meas.base.GaapFluxAlgorithm(config.aperture.makeControl(), name, schema)
-        Struct.__init__(self, aperture=aperture)
 
 class BaseGaapFluxConfig(ModelPsfMatchConfig):
-    seeing = ListField(dtype=float, default=[3,5, 5.0, 6.5], doc="list of target seeings (FWHM, pixels)")
-
+    scalingFactor = Field(dtype=float, default=1.15, doc="Scale factor to scale the worst seeing")
     aperture = ConfigField(dtype=GaapFluxConfig, doc="Gaussian photometry parameters")
-    #psfMatchKernel = ConfigChoiceField(
-    #                                   doc="kernel type",
-    #                                   typemap=dict(
-    #                                                AL=PsfMatchConfigAL,
-    #                                               ),
-    #                                   default="AL",
-    #                                  )
 
-    def getGaapResultName(*args):
+    def getGaapResultName(*args) -> str:
         return "ext_gaap_GaapFlux"
 
-    def setDefaults(self):
+    def setDefaults(self) -> None:
         ModelPsfMatchConfig.setDefaults(self)
+        # TODO: The following will move to a config file later in DM-27482
         self.kernel.active.alardNGauss = 1
         self.kernel.active.alardDegGaussDeconv = 1
-        self.kernel.active.alardDegGauss = [1]
-        self.kernel.active.alardSigGauss = [1.0]
+        self.kernel.active.alardDegGauss = [8]
+        self.kernel.active.alardGaussBeta = 1.0
+        self.kernel.active.spatialKernelOrder = 0
 
 
 class BaseGaapFluxPlugin(lsst.meas.base.BaseMeasurementPlugin):
     @classmethod
-    def getExecutionOrder(cls):
-        return 300000.2 ## HACK ALERT
+    def getExecutionOrder(cls) -> float:
+        return cls.FLUX_ORDER
 
-    def __init__(self, config, name, schema, metadata):
+    def __init__(self, config, name, schema, metadata) -> None:
         """
-        GAaP
+        Gaussian Aperture and PSF (GAaP) photometry plugin.
         """
         lsst.meas.base.BaseMeasurementPlugin.__init__(self, config, name)
-        self.seeingKey = schema.addField(name + "_seeing", type="F",
+        self.seeingKey = schema.addField(name, type="F",
                                          doc="original seeing (Gaussian sigma) at position",
                                          units="pixel")
         self.centroidExtractor = lsst.meas.base.SafeCentroidExtractor(schema, name)
 
         flagDefs = lsst.meas.base.FlagDefinitionList()
         flagDefs.addFailureFlag("error in running ConvolvedFluxPlugin")
-        self.flagHandler = lsst.meas.base.FlagHandler.addFields(schema, name, flagDefs)
-        self.gaussianAperture = lsst.meas.base.GaapFluxAlgorithm(config.aperture.makeControl(), 'GaapFlux'+name, schema)
+        self.flagHandler = lsst.meas.base.FlagHandler.addFields(schema, "GAaP", flagDefs)
+        self.gaussianAperture = GaapFluxAlgorithm(config.aperture.makeControl(),
+                                                  name, schema)
 
-    def convolve(self, exposure, modelPsf, footprint, maxRadius):
+    def convolve(self, exposure, modelPsf, footprint) -> afwImage.Exposure:
         """ Convolve
 
         Parameters
@@ -110,28 +100,29 @@ class BaseGaapFluxPlugin(lsst.meas.base.BaseMeasurementPlugin):
         """
 
         bbox = footprint.getBBox()
-        pixToGrow = 8 # 2*max(self.psfMatch.kConfig.sizeCellX, self.psfMatch.kConfig.sizeCellY)
+        pixToGrow = 8  # Arbitrary for now.
+        # An alternate option is 2*max(self.psfMatch.kConfig.sizeCellX, self.psfMatch.kConfig.sizeCellY)
         bbox.grow(pixToGrow)
 
-        #origPsf = exposure.getPsf(bbox.getCenter())
+        # origPsf = exposure.getPsf(bbox.getCenter())
         origPsf = exposure.getPsf()
 
         maskedImage = exposure.getMaskedImage()
         subImage = maskedImage.Factory(maskedImage, bbox)
         subExposure = afwImage.ExposureF(subImage)
         subExposure.setPsf(origPsf)
-        result = modelPsfMatch.ModelPsfMatchTask(config=self.config).run(exposure=subExposure, referencePsfModel=modelPsf)
-        # TODO: DM-27407 will re-Gaussianize the exposure to make the PSF even more Gaussian
+        self.config.kernel.active.alardSigGauss = [modelPsf.getSigma()]  # The size has to be set dynamically
+        result = modelPsfMatch.ModelPsfMatchTask(config=self.config).run(exposure=subExposure,
+                                                                         referencePsfModel=modelPsf)
+        # TODO: DM-27407 will re-Gaussianize the exposure to make the PSF even more Gaussian-like
         convolved = result.psfMatchedExposure
-        convolved.image.array[np.isnan(convolved.image.array)] = 0. ## HACK ALERT
+        convolved.image.array[np.isnan(convolved.image.array)] = 0.
         return convolved
-        ##return exposure HACK ALERT
 
     def measure(self, measRecord, exposure):
         return self.measureForced(measRecord, exposure, measRecord, None)
 
-    def measureForced(self, measRecord, exposure, refRecord, refWcs):
-        t1 = time.time()
+    def measureForced(self, measRecord, exposure, refRecord, refWcs) -> None:
         psf = exposure.getPsf()
         if psf is None:
             raise lsst.meas.base.MeasurementError("No PSF in exposure")
@@ -148,26 +139,20 @@ class BaseGaapFluxPlugin(lsst.meas.base.BaseMeasurementPlugin):
             transform = lsst.geom.AffineTransform()
 
         center = refCenter if transform is None else transform(refCenter)
-        seeing = psf.computeShape(center).getDeterminantRadius()
-        measRecord.set(self.seeingKey, seeing)
+        seeing = psf.computeShape(center).getTraceRadius()
+        target = self.config.scalingFactor*seeing
 
-        for ii, target in enumerate(self.config.seeing):
-            modelPsf = measAlg.SingleGaussianPsf(width=64, height=64, sigma=SIGMA_TO_FWHM*target)
-            # TO DO: convert seeing in FWHM to sigma
-            # TO DO: Define the aperture shape here, using SafeShapeExtractor - seeing**2
-            try:
-                maxRadius = 64
-                convolved = self.convolve(exposure, modelPsf, measRecord.getFootprint(), maxRadius)
-            except RuntimeError:
-                convolved = exposure
+        modelPsf = measAlg.SingleGaussianPsf(width=64, height=64, sigma=target)
+        try:
+            convolved = self.convolve(exposure, modelPsf, measRecord.getFootprint())
+        except RuntimeError:
+            convolved = exposure
 
-            #import pdb; pdb.set_trace()
-            self.measureAperture(measRecord, convolved, self.gaussianAperture)
-        t2 = time.time()
-        print(t2-t1)
+        self.measureAperture(measRecord, convolved, self.gaussianAperture)
 
-    def measureAperture(self, measRecord, exposure, aperturePhot):
-        """Perform aperture photometry
+    def measureAperture(self, measRecord, exposure, aperturePhot) -> None:
+        """Perform aperture photometry.
+
         Parameters
         ----------
         measRecord : `lsst.afw.table.SourceRecord`
@@ -182,37 +167,31 @@ class BaseGaapFluxPlugin(lsst.meas.base.BaseMeasurementPlugin):
         except Exception:
             aperturePhot.fail(measRecord)
 
-    def fail(self, measRecord, error=None):
+    def fail(self, measRecord, error=None) -> None:
         """ Record failure
         """
         self.flagHandler.handleFailure(measRecord)
 
-    def getBaseNameForSeeing(self, seeing, name=PLUGIN_NAME):
-        indices = [ii for ii, target in enumerate(self.seeing) if seeing==target]
-        if len(indices) != 1:
-            raise RuntimeError(f"Unable to uniquely identify index for seeing {seeing}: {indices}")
-        return name + f"_{indices[0]}"
-
-    def getGaapResultName(self, seeing, name=PLUGIN_NAME):
-        return self.getBaseNameForSeeing(seeing, name=name)+"_gaap"
-
 
 def wrapPlugin(Base, PluginClass=BaseGaapFluxPlugin, ConfigClass=BaseGaapFluxConfig,
-                name=PLUGIN_NAME, factory=BaseGaapFluxPlugin):
-    WrappedConfig = type("GAaPFlux"+ Base.ConfigClass.__name__, (Base.ConfigClass, ConfigClass), {})
-    typeDict = dict(AlgClass=PluginClass, ConfigClass=WrappedConfig, factory=factory, getExecutionOrder=PluginClass.getExecutionOrder)
+               name=PLUGIN_NAME, factory=BaseGaapFluxPlugin):
+    WrappedConfig = type("GAaPFlux" + Base.ConfigClass.__name__, (Base.ConfigClass, ConfigClass), {})
+    typeDict = dict(AlgClass=PluginClass, ConfigClass=WrappedConfig, factory=factory,
+                    getExecutionOrder=PluginClass.getExecutionOrder)
     WrappedPlugin = type("GAaPFlux" + Base.__name__, (Base,), typeDict)
 
     Base.registry.register(name, WrappedPlugin)
     return WrappedPlugin, WrappedConfig
 
+
 def wrapPluginForced(Base, PluginClass=BaseGaapFluxPlugin, ConfigClass=BaseGaapFluxConfig,
-                        name=PLUGIN_NAME, factory=BaseGaapFluxPlugin):
+                     name=PLUGIN_NAME, factory=BaseGaapFluxPlugin):
 
     def forcedPluginFactory(name, config, schemaMapper, metadata):
         return factory(name, config, schemaMapper.editOutputSchema(), metadata)
     return wrapPlugin(Base, PluginClass=PluginClass, ConfigClass=ConfigClass, name=name,
-                        factory=staticmethod(forcedPluginFactory))
+                      factory=staticmethod(forcedPluginFactory))
+
 
 GaapFluxPlugin, GaapFluxConfig = wrapPlugin(WrappedSingleFramePlugin)
 ForcedGaapFluxPlugin, ForcedGaapFluxConfig = wrapPluginForced(WrappedForcedPlugin)

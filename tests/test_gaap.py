@@ -23,26 +23,20 @@ from __future__ import absolute_import, division, print_function
 
 import math
 import unittest
+import galsim
 import lsst.utils.tests
 import lsst.daf.base as dafBase
 import lsst.afw.detection as afwDetection
 import lsst.afw.geom as afwGeom
-import lsst.geom
-import lsst.geom as geom # HACK ALERT
-import lsst.afw.geom.ellipses as afwEll
+import lsst.geom as geom
 import lsst.afw.table as afwTable
 import lsst.afw.image as afwImage
 import lsst.meas.base as measBase
 import lsst.meas.algorithms as measAlg
 from lsst.ip.diffim import modelPsfMatch
-import numpy as np
-import sys
-sys.path.append('/home/kannawad/repo/meas_extensions_gaap/')
-sys.path.append('/home/kannawad/repo/meas_extensions_gaap/python/')
-sys.path.append('/home/kannawad/repo/meas_extensions_gaap/lib/')
-import lsst.meas.extensions.gaap  # Load flux.convolved algorithm
-
 import lsst.afw.display as afwDisplay
+import numpy as np
+import lsst.meas.extensions.gaap  # Load flux.convolved algorithm
 
 try:
     type(display)
@@ -51,6 +45,7 @@ except NameError:
     frame = 1
 
 SIGMA_TO_FWHM = 2.0*math.sqrt(2.0*math.log(2.0))
+
 
 def makeExposure(bbox, scale, psfFwhm, flux):
     """Make a fake exposure
@@ -95,12 +90,34 @@ def makeExposure(bbox, scale, psfFwhm, flux):
                                   cdMatrix=cdMatrix))
     return exp, center
 
+
+def makeGalaxyExposure(bbox, scale, psfSigma=0.9, flux=1000., galSigma=3.7):
+    psfWidth = 2*int(4.0*psfSigma) + 1
+    galWidth = 2*int(40.*math.hypot(galSigma, psfSigma)) + 1
+    gal = galsim.Gaussian(sigma=galSigma, flux=1000.).shear(g1=0.3, g2=0.4)
+
+    galIm = galsim.Image(galWidth, galWidth)
+    galIm = galsim.Convolve([gal, galsim.Gaussian(sigma=psfSigma, flux=1.)]).drawImage(image=galIm,
+                                                                                       scale=0.3,
+                                                                                       method='real_space')
+    exposure = afwImage.makeExposure(afwImage.makeMaskedImageFromArrays(galIm.array))
+    exposure.setPsf(afwDetection.GaussianPsf(psfWidth, psfWidth, psfSigma))
+    exposure.getMaskedImage().getVariance().set(1.0)
+    exposure.getMaskedImage().getMask().set(0)
+    center = exposure.getBBox().getCenter()
+
+    cdMatrix = afwGeom.makeCdMatrix(scale=scale)
+    exposure.setWcs(afwGeom.makeSkyWcs(crpix=center,
+                                       crval=geom.SpherePoint(0.0, 0.0, geom.degrees),
+                                       cdMatrix=cdMatrix))
+    return exposure, center
+
+
 def makeGaussianizedExposure(bbox, scale, psfFwhm, flux, modelPsf=None):
     exposure, center = makeExposure(bbox, scale, psfFwhm, flux)
-    pixToGrow = 0 # 2*max(self.psfMatch.kConfig.sizeCellX, self.psfMatch.kConfig.sizeCellY)
+    pixToGrow = 0
     bbox.grow(pixToGrow)
 
-    #origPsf = exposure.getPsf(bbox.getCenter())
     origPsf = exposure.getPsf()
 
     maskedImage = exposure.getMaskedImage()
@@ -111,20 +128,20 @@ def makeGaussianizedExposure(bbox, scale, psfFwhm, flux, modelPsf=None):
         modelPsf = measAlg.SingleGaussianPsf(width=64, height=64, sigma=SIGMA_TO_FWHM*0.6)
     result = modelPsfMatch.ModelPsfMatchTask().run(exposure=subExposure, referencePsfModel=modelPsf)
     convolved = result.psfMatchedExposure
-    convolved.image.array[np.isnan(convolved.image.array)] = 0. ## HACK ALERT
+    convolved.image.array[np.isnan(convolved.image.array)] = 0.  # HACK ALERT
     return convolved, center
+
 
 class GaapFluxTestCase(lsst.utils.tests.TestCase):
 
-    def check(self, psfFwhm=0.5, flux=1000., forced=False):
-        return 0
-        bbox = geom.Box2I(geom.Point2I(12345,6789), geom.Extent2I(200,300))
+    def check(self, psfSigma=0.5, flux=1000., scalingFactor=1.15, forced=False):
+        bbox = geom.Box2I(geom.Point2I(12345, 6789), geom.Extent2I(200, 300))
 
         scale = 0.1*geom.arcseconds
 
         TaskClass = measBase.ForcedMeasurementTask if forced else measBase.SingleFrameMeasurementTask
 
-        exposure, center = makeExposure(bbox, scale, psfFwhm, flux)
+        exposure, center = makeGalaxyExposure(bbox, scale, psfSigma, flux)
 
         measConfig = TaskClass.ConfigClass()
         algName = "ext_gaap_GaapFlux"
@@ -134,17 +151,15 @@ class GaapFluxTestCase(lsst.utils.tests.TestCase):
         if forced:
             measConfig.copyColumns = {"id": "objectId", "parent": "parentObjectId"}
 
-        values = [ii/scale.asArcseconds() for ii in (0.6, 0.8, 1.0, 1.2)]
         algConfig = measConfig.plugins[algName]
-        algConfig.seeing = values
-#        algConfig.aperture.radii = values
+        algConfig.scalingFactor = scalingFactor
 
         if forced:
             offset = geom.Extent2D(-12.3, 45.6)
             refWcs = exposure.getWcs().copyAtShiftedPixelOrigin(offset)
             refSchema = afwTable.SourceTable.makeMinimalSchema()
-            centroidKey = afwTable.Point2DKey.addFields(refSchema, "my_centroid", doc="centroid", unit="pixel")
-            shapeKey = afwTable.QuadrupoleKey.addFields(refSchema, "my_shape", "shape")
+            centroidKey = afwTable.Point2DKey.addFields(refSchema, "my_centroid", doc="centroid",
+                                                        unit="pixel")
 
             refSchema.getAliasMap().set("slot_Centroid", "my_centroid")
             refSchema.getAliasMap().set("slot_Shape", "my_shape")
@@ -162,8 +177,8 @@ class GaapFluxTestCase(lsst.utils.tests.TestCase):
             taskRunArgs = ()
 
         # Activate undeblended measurement with the same configuration
-        measConfig.undeblended.names.add(algName)
-        measConfig.undeblended[algName] = measConfig.plugins[algName]
+        # measConfig.undeblended.names.add(algName)
+        # measConfig.undeblended[algName] = measConfig.plugins[algName]
 
         algMetadata = dafBase.PropertyList()
         task = TaskClass(*taskInitArgs, config=measConfig, algMetadata=algMetadata)
@@ -180,23 +195,32 @@ class GaapFluxTestCase(lsst.utils.tests.TestCase):
 
         disp = afwDisplay.Display(frame)
         disp.mtv(exposure)
-        disp.dot("x", *center, origin=afwImage.PARENT, title="psfFwhm=%f" % (psfFwhm,))
+        disp.dot("x", *center, origin=afwImage.PARENT, title="psfSigma=%f" % (psfSigma,))
 
         self.assertFalse(source.get(algName + "_flag"))  # algorithm succeeded
-        originalSeeing = psfFwhm/scale.asArcseconds()
+        self.assertFalse(source.get("GAaP_flag"))
+        # We will check the accuracy of the algorithm in a later ticket.
+        # We simply check now if it produces a positive number (non-nan)
+        self.assertTrue((source.get(algName + "_instFlux") > 0))
+        self.assertTrue((source.get(algName + "_instFluxErr") > 0))
 
-        for prefix in ("", "undeblended_"):
-            if not forced:
-                targetSeeing = 0.6
-                gaapName = algConfig.getGaapResultName(targetSeeing)
+    def runGaap(self, forced, scalingFactors=(1.0, 1.1, 1.15, 1.2, 1.5, 2.0), psfSigmas=(0.5, 0.9, 1.3)):
+        for scalingFactor in scalingFactors:
+            for psfSigma in psfSigmas:
+                self.check(psfSigma=psfSigma, forced=forced, scalingFactor=scalingFactor)
 
-                #print(source.get(prefix + gaapName + "_flux"), source.get(prefix + gaapName + "_fluxErr"), source.get(prefix + gaapName + "_flag"))
+    def testGaapUnforced(self):
+        self.runGaap(False)
 
-    def testGaapFlux(self):
-        return 0
-        for forced in (False, True):
-            for psfFwhm in (0.5, 0.9, 1.3):
-                self.check(psfFwhm=psfFwhm, forced=forced)
+    # TODO: DM-27646 - Test the algorithm in forced mode.
+    @unittest.skip("GAaP is known to fail in forced mode. To be fixed in DM-27646")
+    def testGaapForced(self):
+        self.runGaap(True)
+
+
+class TestMemory(lsst.utils.tests.MemoryTestCase):
+    pass
+
 
 def setup_module(module, backend="virtualDevice"):
     lsst.utils.tests.init()
@@ -204,6 +228,7 @@ def setup_module(module, backend="virtualDevice"):
         afwDisplay.setDefaultBackend(backend)
     except Exception:
         print("Unable to configure display backend: %s" % backend)
+
 
 if __name__ == "__main__":
     import sys

@@ -24,6 +24,7 @@
 #include "ndarray/eigen.h"
 
 #include "lsst/afw/detection/Psf.h"
+#include "lsst/afw/detection/GaussianPsf.h"
 #include "lsst/geom/Box.h"
 #include "lsst/afw/geom/ellipses/Ellipse.h"
 #include "lsst/afw/table/Source.h"
@@ -56,27 +57,32 @@ GaapFluxAlgorithm::GaapFluxAlgorithm(Control const& ctrl, std::string const& nam
 void GaapFluxAlgorithm::measure(afw::table::SourceRecord& measRecord,
                                     afw::image::Exposure<float> const& exposure) const {
     geom::Point2D centroid = _centroidExtractor(measRecord, _flagHandler);
-    afw::geom::ellipses::Quadrupole shape;
-    if (0) {
-        // shape = _ctrl.shape;
-        shape.setIxx(_ctrl.ixx);
-        shape.setIyy(_ctrl.iyy);
-        shape.setIxy(_ctrl.ixy);
+    afw::geom::ellipses::Quadrupole measShape = _shapeExtractor(measRecord, _flagHandler);
+    /* TODO: DM-27408 will compute the shape for optimality, and pick a shape so that
+       shape measurement failure doesn't lead to GAaP flux measurement failure.
+    */
 
-        // Commenting to see if it avoids std::bad_alloc error
-        // afw::geom::ellipses::BaseCore::ParameterVector paramVector(*_ctrl.shape.data());
-        // afw::geom::ellipses::Quadrupole inShape = afw::geom::ellipses::Quadrupole(paramVector);
-        // shape = afw::geom::ellipses::Quadrupole(paramVector);
-        // shape = _shapeExtractor(measRecord, _flagHandler);
-    }
-    else {
-        shape = _shapeExtractor(measRecord, _flagHandler);
-    }
+    double p = std::static_pointer_cast<const afw::detection::GaussianPsf>(exposure.getPsf())->getSigma();
+    double p2 = std::pow(p, 2);
+    /*  TODO: Cast the pointer safely in DM-27604.
+        If we cannot guarantee that the PSF is Gaussian, it is better to use dynamic_pointer_cast,
+        check if it is empty (it will be if the PSF was not a GaussianPsf object) and
+        throw an exception
+    */
+
+    // TODO: Need to check that this doesn't make Ixx, Iyy negative in DM-27605
+    afw::geom::ellipses::Quadrupole shape = afw::geom::ellipses::Quadrupole(measShape.getIxx()-p2, measShape.getIyy()-p2, measShape.getIxy());
+
+    double scaleFactor = std::pow(measShape.getDeterminant()/shape.getDeterminant(), 0.5);
 
     base::FluxResult result =
             base::SdssShapeAlgorithm::computeFixedMomentsFlux(exposure.getMaskedImage(), shape, centroid);
 
+    result.instFlux *= scaleFactor;
+    result.instFluxErr *= scaleFactor;
+
     measRecord.set(_instFluxResultKey, result);
+    // TODO: DM-27088 will estimate the error correctly due to pixel correlations
     _flagHandler.setValue(measRecord, FAILURE.number, false);
 }
 

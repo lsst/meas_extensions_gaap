@@ -20,23 +20,5 @@
 # see <http://www.lsstcorp.org/LegalNotices/>.
 #
 
-#from .version import *
-# from .gaap import * ## Python version
-
-from lsst.meas.base import BasePlugin, wrapSimpleAlgorithm
-from .gaapFlux import GaapFluxAlgorithm, GaapFluxControl, GaapFluxTransform
-
-__all__ = ["GaapFluxAlgorithm", "GaapFluxControl", "GaapFluxTransform", "GaapFluxPlugin",
-           "GaapFluxForcedPlugin"]
-
-GaapFluxPlugin, GaapFluxForcedPlugin = wrapSimpleAlgorithm(
-    GaapFluxAlgorithm,
-    name = "ext_gaap_GaapFlux",
-    Control = GaapFluxControl,
-    executionOrder = BasePlugin.FLUX_ORDER,
-    shouldApCorr = False,
-    needsMetadata = True,
-)
-
 from .version import *
-# from .gaap import * ## Python version
+from .gaap import * ## Python version

@@ -45,31 +45,17 @@ namespace gaap {
 class GaapFluxControl {
 public:
 
-    // GaapFluxControl();
 
     LSST_CONTROL_FIELD(background, double, "FIXME! NEVER DOCUMENTED!");
-
-    LSST_CONTROL_FIELD(sigma, double, "Sigma (in pixels) of the Gaussian aperture, if gaap is True.");
-
-    // TO DO: Pass a vector of 3 parameters and instantiate Quadrupole from the vector directly
-    LSST_CONTROL_FIELD(ixx, double, "ixx (in pixels) of the Gaussian aperture, if gaap is True.");
-
-    LSST_CONTROL_FIELD(iyy, double, "iyy (in pixels) of the Gaussian aperture, if gaap is True.");
-
-    LSST_CONTROL_FIELD(ixy, double, "ixy (in pixels) of the Gaussian aperture, if gaap is True.");
-
-    LSST_CONTROL_FIELD(shape, std::vector<double>, "Shape of Gaussian aperture");
+    // Undocumented relic from GaussianFlux
 
     /**
      *  @brief Default constructor
      *
      *  All control classes should define a default constructor that sets all fields to their default values.
      */
-    // std::vector<double> vect = {1.0, 1.0, 0.0};
-    // vect.push_back(1.0);
-    // vect.push_back(1.0);
-    // vect.push_back(0.0);
-    GaapFluxControl() : background(0.0), sigma(0.0), ixx(2.0), iyy(2.0), ixy(0.0), shape() {}  // , shape(vect) {}
+
+    GaapFluxControl() : background(0.0) {}
 };
 
 /**
@@ -95,14 +81,12 @@ public:
                          afw::image::Exposure<float> const& exposure) const;
 
     virtual void fail(afw::table::SourceRecord& measRecord, base::MeasurementError* error = nullptr) const;
-
 private:
     Control _ctrl;
     base::FluxResultKey _instFluxResultKey;
     base::FlagHandler _flagHandler;
     base::SafeCentroidExtractor _centroidExtractor;
     base::SafeShapeExtractor _shapeExtractor;
-    base::SafeShapeExtractor _psfShapeExtractor;
 };
 
 class GaapFluxTransform : public base::FluxTransform {

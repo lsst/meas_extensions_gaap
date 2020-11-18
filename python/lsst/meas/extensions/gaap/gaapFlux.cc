@@ -54,18 +54,6 @@ void declareGaapFluxControl(py::module &mod) {
     cls.def(py::init<>());
 
     LSST_DECLARE_CONTROL_FIELD(cls, GaapFluxControl, background);
-    LSST_DECLARE_CONTROL_FIELD(cls, GaapFluxControl, sigma);
-    LSST_DECLARE_CONTROL_FIELD(cls, GaapFluxControl, shape);
-    LSST_DECLARE_CONTROL_FIELD(cls, GaapFluxControl, ixx);
-    LSST_DECLARE_CONTROL_FIELD(cls, GaapFluxControl, iyy);
-    LSST_DECLARE_CONTROL_FIELD(cls, GaapFluxControl, ixy);
-
-  //  cls.def(py::init<>());
-
-    // cls.def_property("shape",
-    //                 py::cpp_function([](GaapFluxControl &c){return 0;}, py::keep_alive<0, 1>()),
-    //                 py::cpp_function([](GaapFluxControl &c, std::vector<double> &v){c.shape = v;})
-    //               );
 }
 
 void declareGaapFluxAlgorithm(py::module &mod) {
