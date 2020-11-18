@@ -21,8 +21,6 @@
 #
 
 import math
-import os
-
 import lsst.afw.image as afwImage
 import lsst.meas.algorithms as measAlg
 import lsst.meas.base
@@ -32,10 +30,9 @@ from lsst.ip.diffim import modelPsfMatch
 from lsst.ip.diffim.modelPsfMatch import ModelPsfMatchConfig
 from lsst.meas.base.wrappers import (WrappedForcedPlugin,
                                      WrappedSingleFramePlugin)
-from lsst.pex.config import ConfigField, Field, ListField, makeConfigClass
+from lsst.pex.config import ConfigField, Field, makeConfigClass
 
-# os.environ['LD_LIBRARY_PATH'] += ':/home/kannawad/repo/meas_extensions_gaap/lib'
-from .gaapFlux import GaapFluxAlgorithm, GaapFluxControl, GaapFluxTransform
+from .gaapFlux import GaapFluxAlgorithm, GaapFluxControl
 
 # from lsst.meas.extensions.gaap.gaapFlux import GaapFluxAlgorithm, GaapFluxControl, GaapFluxTransform
 
