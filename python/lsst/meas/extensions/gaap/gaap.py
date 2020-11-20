@@ -23,6 +23,7 @@
 import math
 import lsst.afw.image as afwImage
 import lsst.meas.algorithms as measAlg
+import lsst.afw.detection as afwDetection
 import lsst.meas.base
 import numpy as np
 from lsst.afw.geom.skyWcs import makeWcsPairTransform
@@ -140,6 +141,7 @@ class BaseGaapFluxPlugin(lsst.meas.base.BaseMeasurementPlugin):
         target = self.config.scalingFactor*seeing
 
         modelPsf = measAlg.SingleGaussianPsf(width=64, height=64, sigma=target)
+        modelPsf = afwDetection.GaussianPsf(65, 65, target)
         try:
             convolved = self.convolve(exposure, modelPsf, measRecord.getFootprint())
         except RuntimeError:

@@ -62,16 +62,19 @@ void GaapFluxAlgorithm::measure(afw::table::SourceRecord& measRecord,
        shape measurement failure doesn't lead to GAaP flux measurement failure.
     */
 
-    double p = std::static_pointer_cast<const afw::detection::GaussianPsf>(exposure.getPsf())->getSigma();
+    auto const psf = std::dynamic_pointer_cast<const afw::detection::GaussianPsf>(exposure.getPsf());
+    if (!psf) {
+        throw LSST_EXCEPT(
+            meas::base::FatalAlgorithmError,
+            "No GaussianPsf was attached the Exposure passed on the GaapFlux algorithm"
+        );
+    }
+
+    double p = psf->getSigma();
     double p2 = std::pow(p, 2);
-    /*  TODO: Cast the pointer safely in DM-27604.
-        If we cannot guarantee that the PSF is Gaussian, it is better to use dynamic_pointer_cast,
-        check if it is empty (it will be if the PSF was not a GaussianPsf object) and
-        throw an exception
-    */
 
     // TODO: Need to check that this doesn't make Ixx, Iyy negative in DM-27605
-    afw::geom::ellipses::Quadrupole shape = afw::geom::ellipses::Quadrupole(measShape.getIxx()-p2, measShape.getIyy()-p2, measShape.getIxy());
+    auto shape = afw::geom::ellipses::Quadrupole(measShape.getIxx()-p2, measShape.getIyy()-p2, measShape.getIxy());
 
     double scaleFactor = std::pow(measShape.getDeterminant()/shape.getDeterminant(), 0.5);
 

@@ -101,7 +101,7 @@ def makeGalaxyExposure(bbox, scale, psfSigma=0.9, flux=1000., galSigma=3.7):
                                                                                        scale=0.3,
                                                                                        method='real_space')
     exposure = afwImage.makeExposure(afwImage.makeMaskedImageFromArrays(galIm.array))
-    exposure.setPsf(afwDetection.GaussianPsf(psfWidth, psfWidth, psfSigma))
+    exposure.setPsf(measAlg.SingleGaussianPsf(psfWidth, psfWidth, psfSigma))
     exposure.getMaskedImage().getVariance().set(1.0)
     exposure.getMaskedImage().getMask().set(0)
     center = exposure.getBBox().getCenter()
