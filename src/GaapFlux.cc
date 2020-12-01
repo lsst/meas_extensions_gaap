@@ -73,7 +73,13 @@ void GaapFluxAlgorithm::measure(afw::table::SourceRecord& measRecord,
     double p = psf->getSigma();
     double p2 = std::pow(p, 2);
 
-    // TODO: Need to check that this doesn't make Ixx, Iyy negative in DM-27605
+    if (p2>=std::min(measShape.getIxx(), measShape.getIyy())) {
+        throw LSST_EXCEPT(
+            meas::base::MeasurementError,
+            "The GaussianPsf was larger than the effective aperture",
+            -1
+        );
+    }
     auto shape = afw::geom::ellipses::Quadrupole(measShape.getIxx()-p2, measShape.getIyy()-p2, measShape.getIxy());
 
     double scaleFactor = std::pow(measShape.getDeterminant()/shape.getDeterminant(), 0.5);
