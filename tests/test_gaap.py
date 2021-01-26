@@ -91,28 +91,6 @@ def makeExposure(bbox, scale, psfFwhm, flux):
     return exp, center
 
 
-def makeGalaxyExposure(bbox, scale, psfSigma=0.9, flux=1000., galSigma=3.7):
-    psfWidth = 2*int(4.0*psfSigma) + 1
-    galWidth = 2*int(40.*math.hypot(galSigma, psfSigma)) + 1
-    gal = galsim.Gaussian(sigma=galSigma, flux=1000.).shear(g1=0.3, g2=0.4)
-
-    galIm = galsim.Image(galWidth, galWidth)
-    galIm = galsim.Convolve([gal, galsim.Gaussian(sigma=psfSigma, flux=1.)]).drawImage(image=galIm,
-                                                                                       scale=0.3,
-                                                                                       method='real_space')
-    exposure = afwImage.makeExposure(afwImage.makeMaskedImageFromArrays(galIm.array))
-    exposure.setPsf(measAlg.SingleGaussianPsf(psfWidth, psfWidth, psfSigma))
-    exposure.getMaskedImage().getVariance().set(1.0)
-    exposure.getMaskedImage().getMask().set(0)
-    center = exposure.getBBox().getCenter()
-
-    cdMatrix = afwGeom.makeCdMatrix(scale=scale)
-    exposure.setWcs(afwGeom.makeSkyWcs(crpix=center,
-                                       crval=geom.SpherePoint(0.0, 0.0, geom.degrees),
-                                       cdMatrix=cdMatrix))
-    return exposure, center
-
-
 def makeGaussianizedExposure(bbox, scale, psfFwhm, flux, modelPsf=None):
     exposure, center = makeExposure(bbox, scale, psfFwhm, flux)
     pixToGrow = 0
@@ -128,20 +106,44 @@ def makeGaussianizedExposure(bbox, scale, psfFwhm, flux, modelPsf=None):
         modelPsf = measAlg.SingleGaussianPsf(width=64, height=64, sigma=SIGMA_TO_FWHM*0.6)
     result = modelPsfMatch.ModelPsfMatchTask().run(exposure=subExposure, referencePsfModel=modelPsf)
     convolved = result.psfMatchedExposure
-    convolved.image.array[np.isnan(convolved.image.array)] = 0.  # HACK ALERT
+    # convolved.image.array[np.isnan(convolved.image.array)] = 0.  # HACK ALERT
     return convolved, center
+
+
+def makeGalaxyExposure(bbox, scale, psfSigma=0.9, flux=1000., galSigma=3.7):
+    psfWidth = 2*int(4.0*psfSigma) + 1
+    galWidth = 2*int(40.*math.hypot(galSigma, psfSigma)) + 1
+    gal = galsim.Gaussian(sigma=galSigma, flux=flux)
+
+    galIm = galsim.Image(galWidth, galWidth)
+    galIm = galsim.Convolve([gal, galsim.Gaussian(sigma=psfSigma, flux=1.)]).drawImage(image=galIm,
+                                                                                       scale=1.0,
+                                                                                       method='no_pixel')
+    exposure = afwImage.makeExposure(afwImage.makeMaskedImageFromArrays(galIm.array))
+    exposure.setPsf(afwDetection.GaussianPsf(psfWidth, psfWidth, psfSigma))
+
+    exposure.getMaskedImage().getVariance().set(1.0)
+    exposure.getMaskedImage().getMask().set(0)
+    center = exposure.getBBox().getCenter()
+
+    cdMatrix = afwGeom.makeCdMatrix(scale=scale)
+    exposure.setWcs(afwGeom.makeSkyWcs(crpix=center,
+                                       crval=geom.SpherePoint(0.0, 0.0, geom.degrees),
+                                       cdMatrix=cdMatrix))
+    return exposure, center
 
 
 class GaapFluxTestCase(lsst.utils.tests.TestCase):
 
-    def check(self, psfSigma=0.5, flux=1000., scalingFactor=1.15, forced=False):
+    def check(self, psfSigma=0.5, flux=1000., scalingFactors=[1.15], forced=False):
         bbox = geom.Box2I(geom.Point2I(12345, 6789), geom.Extent2I(200, 300))
 
         scale = 0.1*geom.arcseconds
 
         TaskClass = measBase.ForcedMeasurementTask if forced else measBase.SingleFrameMeasurementTask
 
-        exposure, center = makeGalaxyExposure(bbox, scale, psfSigma, flux)
+        # Create an image of a tiny source
+        exposure, center = makeGalaxyExposure(bbox, scale, psfSigma, flux, galSigma=0.001)
 
         measConfig = TaskClass.ConfigClass()
         algName = "ext_gaap_GaapFlux"
@@ -152,7 +154,7 @@ class GaapFluxTestCase(lsst.utils.tests.TestCase):
             measConfig.copyColumns = {"id": "objectId", "parent": "parentObjectId"}
 
         algConfig = measConfig.plugins[algName]
-        algConfig.scalingFactor = scalingFactor
+        algConfig.scalingFactors = scalingFactors
 
         if forced:
             offset = geom.Extent2D(-12.3, 45.6)
@@ -160,7 +162,7 @@ class GaapFluxTestCase(lsst.utils.tests.TestCase):
             refSchema = afwTable.SourceTable.makeMinimalSchema()
             centroidKey = afwTable.Point2DKey.addFields(refSchema, "my_centroid", doc="centroid",
                                                         unit="pixel")
-
+            shapeKey = afwTable.QuadrupoleKey.addFields(refSchema, "my_shape", "shape")
             refSchema.getAliasMap().set("slot_Centroid", "my_centroid")
             refSchema.getAliasMap().set("slot_Shape", "my_shape")
             refSchema.addField("my_centroid_flag", type="Flag", doc="centroid flag")
@@ -168,6 +170,7 @@ class GaapFluxTestCase(lsst.utils.tests.TestCase):
             refCat = afwTable.SourceCatalog(refSchema)
             refSource = refCat.addNew()
             refSource.set(centroidKey, center + offset)
+            refSource.set(shapeKey, afwGeom.Quadrupole(1.0, 1.0, 0.0))
 
             refSource.setCoord(refWcs.pixelToSky(refSource.get(centroidKey)))
             taskInitArgs = (refSchema,)
@@ -177,8 +180,8 @@ class GaapFluxTestCase(lsst.utils.tests.TestCase):
             taskRunArgs = ()
 
         # Activate undeblended measurement with the same configuration
-        # measConfig.undeblended.names.add(algName)
-        # measConfig.undeblended[algName] = measConfig.plugins[algName]
+        measConfig.undeblended.names.add(algName)
+        measConfig.undeblended[algName] = measConfig.plugins[algName]
 
         algMetadata = dafBase.PropertyList()
         task = TaskClass(*taskInitArgs, config=measConfig, algMetadata=algMetadata)
@@ -198,22 +201,23 @@ class GaapFluxTestCase(lsst.utils.tests.TestCase):
         disp.dot("x", *center, origin=afwImage.PARENT, title="psfSigma=%f" % (psfSigma,))
 
         self.assertFalse(source.get(algName + "_flag"))  # algorithm succeeded
-        self.assertFalse(source.get("GAaP_flag"))
-        # We will check the accuracy of the algorithm in a later ticket.
+        # We will check the accuracy of the measured flux in a later ticket.
         # We simply check now if it produces a positive number (non-nan)
-        self.assertTrue((source.get(algName + "_instFlux") > 0))
-        self.assertTrue((source.get(algName + "_instFluxErr") > 0))
+        for sF in scalingFactors:
+            self.assertTrue((source.get(algName + "_" + str(sF).replace(".","_") + "_instFlux") >= 0))
+            self.assertTrue((source.get(algName + "_" + str(sF).replace(".","_") + "_instFluxErr") >= 0))
+            # self.assertTrue( np.abs(source.get(algName + "_instFlux")/1000.-1) > 0.0 )
 
-    def runGaap(self, forced, scalingFactors=(1.0, 1.1, 1.15, 1.2, 1.5, 2.0), psfSigmas=(0.5, 0.9, 1.3)):
-        for scalingFactor in scalingFactors:
+    def runGaap(self, forced, scalingFactors=(1.0, 1.1, 1.15, 1.2, 1.5, 2.0), psfSigmas=(2.1, 1.7, 0.95, 1.3,)):
+        #for scalingFactor in scalingFactors:
             for psfSigma in psfSigmas:
-                self.check(psfSigma=psfSigma, forced=forced, scalingFactor=scalingFactor)
+                self.check(psfSigma=psfSigma, forced=forced, scalingFactors=scalingFactors)
 
     def testGaapUnforced(self):
         self.runGaap(False)
 
     # TODO: DM-27646 - Test the algorithm in forced mode.
-    @unittest.skip("GAaP is known to fail in forced mode. To be fixed in DM-27646")
+    # @unittest.skip("GAaP is known to fail in forced mode. To be fixed in DM-27646")
     def testGaapForced(self):
         self.runGaap(True)
 

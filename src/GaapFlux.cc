@@ -57,6 +57,7 @@ GaapFluxAlgorithm::GaapFluxAlgorithm(Control const& ctrl, std::string const& nam
 void GaapFluxAlgorithm::measure(afw::table::SourceRecord& measRecord,
                                     afw::image::Exposure<float> const& exposure) const {
     geom::Point2D centroid = _centroidExtractor(measRecord, _flagHandler);
+    //afw::geom::ellipses::Quadrupole measShape = _shapeExtractor(measRecord, _flagHandler);
     auto measShape = afw::geom::ellipses::Quadrupole(8.0, 8.0, 0.0);
     /* TODO: DM-27408 will compute the shape for optimality, and pick a shape so that
        shape measurement failure doesn't lead to GAaP flux measurement failure.
