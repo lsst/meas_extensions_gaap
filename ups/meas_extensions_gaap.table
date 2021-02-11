@@ -1,9 +1,0 @@
-setupRequired(meas_algorithms)
-setupRequired(meas_extensions_gaap)
-setupRequired(afw)
-setupRequired(geom)
-setupRequired(meas_base)
-setupRequired(utils)
-setupRequired(daf_base)
-
-envAppend(PYTHONPATH, ${PRODUCT_DIR}/python)
