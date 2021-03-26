@@ -98,10 +98,15 @@ class BaseGaapFluxConfig(measBase.BaseMeasurementPluginConfig):
         check=_isOdd,
         doc="The dimensions (width and height) of the target PSF image in pixels. Must be odd.")
 
-    scaleByFwhm = pexConfig.Field(
-        dtype=bool,
-        default=False,
-        doc="See documentation in modelPsfMatch Task")
+    # scaleByFwm is the only config field of modelPsfMatch Task that we allow
+    # the user to set without explicitly setting the modelPsfMatch config.
+    @property
+    def scaleByFwhm(self) -> bool:
+        return self.modelPsfMatch.kernel.active.scaleByFwhm
+
+    @scaleByFwhm.setter
+    def scaleByFwhm(self, value) -> None:
+        self.modelPsfMatch.kernel.active.scaleByFwhm = value
 
     def setDefaults(self) -> None:
         # TODO: DM-27482 might change these values.
@@ -110,7 +115,6 @@ class BaseGaapFluxConfig(measBase.BaseMeasurementPluginConfig):
         self.modelPsfMatch.kernel.active.alardDegGauss = [8]
         self.modelPsfMatch.kernel.active.alardGaussBeta = 1.0
         self.modelPsfMatch.kernel.active.spatialKernelOrder = 0
-        self.modelPsfMatch.kernel.active.scaleByFwhm = self.scaleByFwhm
 
     def validate(self):
         super().validate()
