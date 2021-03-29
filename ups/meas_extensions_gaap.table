@@ -1,0 +1,11 @@
+setupRequired(afw)
+setupRequired(daf_base)
+setupRequired(geom)
+setupRequired(ip_diffim)
+setupRequired(meas_algorithms)
+setupRequired(meas_base)
+setupRequired(pex_config)
+setupRequired(pex_exceptions)
+setupRequired(utils)
+
+envPrepend(PYTHONPATH, ${PRODUCT_DIR}/python)
