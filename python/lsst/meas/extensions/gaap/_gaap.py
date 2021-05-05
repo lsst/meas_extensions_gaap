@@ -300,32 +300,27 @@ class BaseGaapFluxPlugin(measBase.GenericPlugin):
         return fluxErrScaling
 
     def _convolve(self, exposure: afwImage.Exposure, modelPsf: afwDetection.GaussianPsf,
-                  measRecord: lsst.afw.table.SourceRecord) -> tuple[lsst.pipe.base.Struct,  # noqa: F821
-                                                                    lsst.geom.Box2I]:  # noqa: F821
+                  measRecord: lsst.afw.table.SourceRecord) -> lsst.pipe.base.Struct:  # noqa: F821
         """Convolve the ``exposure`` to make the PSF same as ``modelPsf``.
 
         Parameters
         ----------
-        exposure : `lsst.afw.image.Exposure`
+        exposure : `~lsst.afw.image.Exposure`
             Original (full) exposure containing all the sources.
-        modelPsf : `lsst.afw.detection.GaussianPsf`
+        modelPsf : `~lsst.afw.detection.GaussianPsf`
             Target PSF to which to match.
-        measRecord : `lsst.afw.tabe.SourceRecord`
+        measRecord : `~lsst.afw.tabe.SourceRecord`
             Record for the source to be measured.
 
         Returns
         -------
-        result : `lsst.pipe.base.Struct`
+        result : `~lsst.pipe.base.Struct`
             ``result`` is the Struct returned by `modelPsfMatch` task. Notably,
             it contains a ``psfMatchedExposure``, which is the exposure
             containing the source, convolved to the target seeing and
-            ``psfMatchingKernel``, the kernel that `exposure` was convolved by
-            to obtain ``psfMatchedExposure``.
-        bbox : `lsst.geom.Box2I`
-            ``bbox`` is the bounding box of the footprint in the
-            ``psfMatchedExposure``. The exception to this is if the footprint
-            lies too close to the edge of the ``exposure`` and the bounding box
-            is slighly smaller. The flag_edge is set in such cases.
+            ``psfMatchingKernel``, the kernel that ``exposure`` was convolved
+            by to obtain ``psfMatchedExposure``. Typically, the bounding box of
+            ``psfMatchedExposure`` is larger than that of the footprint.
         """
         footprint = measRecord.getFootprint()
         bbox = footprint.getBBox()
@@ -360,15 +355,15 @@ class BaseGaapFluxPlugin(measBase.GenericPlugin):
         # more Gaussian-like
 
         # Do not let the variance plane be rescaled since we handle it
-        # carefully later in DM-27088
+        # carefully later using _getFluxScaling method
         result.psfMatchedExposure.variance.array = subExposure.variance.array
 
         # N pixels around the edges will have NO_DATA mask bit set,
         # where 2N+1 is the kernelSize. Set N number of pixels to erode without
         # reusing pixToGrow, as pixToGrow can be anything in principle.
         pixToErode = self.config.modelPsfMatch.kernel.active.kernelSize//2
-        bbox = bbox.erodedBy(pixToErode)
-        return result, bbox
+        result.psfMatchedExposure = result.psfMatchedExposure[bbox.erodedBy(pixToErode)]
+        return result
 
     def measure(self, measRecord: lsst.afw.table.SourceRecord, exposure: afwImage.Exposure,  # noqa: F821
                 center: lsst.geom.Point2D) -> None:  # noqa: F821
@@ -384,13 +379,13 @@ class BaseGaapFluxPlugin(measBase.GenericPlugin):
             stampSize = self.config.modelPsfDimension
             targetPsf = afwDetection.GaussianPsf(stampSize, stampSize, targetSigma)
             try:
-                result, bbox = self._convolve(exposure, targetPsf, measRecord)
+                result = self._convolve(exposure, targetPsf, measRecord)
 
             except Exception as error:
                 errorCollection[str(sF)] = error
                 continue
 
-            convolved = result.psfMatchedExposure[bbox]
+            convolved = result.psfMatchedExposure
             kernelAcf = self._computeKernelAcf(result.psfMatchingKernel)
 
             for sigma in self.config.sigmas:
