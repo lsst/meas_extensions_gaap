@@ -23,6 +23,7 @@
 import math
 import unittest
 import galsim
+import itertools
 import lsst.afw.display as afwDisplay
 import lsst.afw.detection as afwDetection
 import lsst.afw.geom as afwGeom
@@ -30,6 +31,7 @@ import lsst.afw.image as afwImage
 import lsst.afw.table as afwTable
 import lsst.daf.base as dafBase
 import lsst.geom as geom
+from lsst.pex.exceptions import InvalidParameterError
 import lsst.meas.base as measBase
 import lsst.meas.base.tests
 import lsst.meas.extensions.gaap
@@ -218,6 +220,124 @@ class GaapFluxTestCase(lsst.utils.tests.TestCase):
         """Run GAaP as forced measurement plugin.
         """
         self.runGaap(True, psfSigma)
+
+    def testFlags(self, sigmas=[2.5, 3.0, 4.0], scalingFactors=[1.15, 1.25, 1.4]):
+        """Test that GAaP flags are set properly.
+
+        Specifically, we test that
+
+        1. for invalid combinations of config parameters, only the
+        appropriate flags are set and not that the entire measurement itself is
+        flagged.
+        2. for sources close to the edge, the edge flags are set.
+
+        Parameters
+        ----------
+        sigmas : `list` [`float`], optional
+            The list of sigmas (in pixels) to construct the `GaapFluxConfig`.
+        scalingFactors : `list` [`float`], optional
+            The list of scaling factors to construct the `GaapFluxConfig`.
+
+        Raises
+        -----
+        InvalidParameterError
+            Raised if none of the config parameters will fail a measurement.
+
+        Notes
+        -----
+        Since the seeing in the test dataset is 2 pixels, at least one of the
+        ``sigmas`` should be smaller than at least twice of one of the
+        ``scalingFactors`` to avoid the InvalidParameterError exception being
+        raised.
+        """
+        gaapConfig = lsst.meas.extensions.gaap.GaapFluxConfig(sigmas=sigmas, scalingFactors=scalingFactors)
+        gaapConfig.scaleByFwhm = True
+
+        # Make an instance of GAaP algorithm from a config
+        algName = "ext_gaap_GaapFlux"
+        algorithm, schema = self.makeAlgorithm(gaapConfig)
+        # Make a noiseless exposure and measurements for reference
+        exposure, catalog = self.dataset.realize(0.0, schema)
+        record = catalog[0]
+        algorithm.measure(record, exposure)
+        seeing = exposure.getPsf().getSigma()
+        # Measurement must fail (i.e., flag_bigpsf must be set) if
+        # sigma < scalingFactor * seeing
+        # Ensure that there is at least one combination of parameters that fail
+        if not(min(gaapConfig.sigmas) < seeing*max(gaapConfig.scalingFactors)):
+            raise InvalidParameterError("The config parameters do not trigger a measurement failure. "
+                                        "Consider including lower values in ``sigmas`` and/or larger values "
+                                        "for ``scalingFactors``")
+        # Ensure that the measurement is not a complete failure
+        self.assertFalse(record[algName + "_flag"])
+        self.assertFalse(record[algName + "_flag_edge"])
+        # Ensure that flag_bigpsf is set if sigma < scalingFactor * seeing
+        for sF, sigma in itertools.product(gaapConfig.scalingFactors, gaapConfig.sigmas):
+            targetSigma = sF*seeing
+            baseName = gaapConfig._getGaapResultName(sF, sigma, algName)
+            if targetSigma >= sigma:
+                self.assertTrue(record[baseName+"_flag_bigpsf"])
+            else:
+                self.assertFalse(record[baseName+"_flag_bigpsf"])
+
+        # Ensure that the edge flag is set for the source at the corner.
+        record = catalog[2]
+        algorithm.measure(record, exposure)
+        self.assertTrue(record[algName + "_flag_edge"])
+        self.assertFalse(record[algName + "_flag"])
+
+    @lsst.utils.tests.methodParameters(noise=(0.001, 0.01, 0.1))
+    def testMonteCarlo(self, noise, recordId=1, sigmas=[3.0, 4.0], scalingFactors=[1.1, 1.15, 1.2, 1.3, 1.4]):
+        """Test GAaP flux uncertainties.
+
+        This test should demonstate that the estimated flux uncertainties agree
+        with those from Monte Carlo simulations.
+
+        Parameters
+        ----------
+        noise : `float`
+            The RMS value of the Gaussian noise field divided by the total flux
+            of the source.
+        recordId : `int`, optional
+            The source Id in the test dataset to measure.
+        sigmas : `list` [`float`], optional
+            The list of sigmas (in pixels) to construct the `GaapFluxConfig`.
+        scalingFactors : `list` [`float`], optional
+            The list of scaling factors to construct the `GaapFluxConfig`.
+        """
+        gaapConfig = lsst.meas.extensions.gaap.GaapFluxConfig(sigmas=sigmas, scalingFactors=scalingFactors)
+        gaapConfig.scaleByFwhm = True
+
+        algorithm, schema = self.makeAlgorithm(gaapConfig)
+        # Make a noiseless exposure and keep measurement record for reference
+        exposure, catalog = self.dataset.realize(0.0, schema)
+        recordNoiseless = catalog[recordId]
+        totalFlux = recordNoiseless["truth_instFlux"]
+        algorithm.measure(recordNoiseless, exposure)
+
+        nSamples = 1024
+        catalog = afwTable.SourceCatalog(schema)
+        for repeat in range(nSamples):
+            exposure, cat = self.dataset.realize(noise*totalFlux, schema, randomSeed=repeat)
+            record = cat[recordId]
+            algorithm.measure(record, exposure)
+            catalog.append(record)
+
+        catalog = catalog.copy(deep=True)
+        for baseName in gaapConfig.getAllGaapResultNames(name="ext_gaap_GaapFlux"):
+            instFluxKey = schema.join(baseName, "instFlux")
+            instFluxErrKey = schema.join(baseName, "instFluxErr")
+            instFluxMean = catalog[instFluxKey].mean()
+            instFluxErrMean = catalog[instFluxErrKey].mean()
+            instFluxStdDev = catalog[instFluxKey].std()
+
+            # GAaP fluxes are not meant to be total fluxes.
+            # We compare the mean of the noisy measurements to its
+            # corresponding noiseless measurement instead of the true value
+            instFlux = recordNoiseless[instFluxKey]
+            # TODO: DM-27088 will set a saner bar for uncertainty estimates
+            self.assertFloatsAlmostEqual(instFluxErrMean, instFluxStdDev, rtol=0.7)
+            self.assertLess(abs(instFluxMean - instFlux), 3.0*instFluxErrMean/nSamples**0.5)
 
 
 class TestMemory(lsst.utils.tests.MemoryTestCase):
