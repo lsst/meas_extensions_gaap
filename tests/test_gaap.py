@@ -23,16 +23,17 @@
 import math
 import unittest
 import galsim
-import lsst.utils.tests
-import lsst.daf.base as dafBase
+import lsst.afw.display as afwDisplay
 import lsst.afw.detection as afwDetection
 import lsst.afw.geom as afwGeom
-import lsst.geom as geom
-import lsst.afw.table as afwTable
 import lsst.afw.image as afwImage
+import lsst.afw.table as afwTable
+import lsst.daf.base as dafBase
+import lsst.geom as geom
 import lsst.meas.base as measBase
-import lsst.afw.display as afwDisplay
+import lsst.meas.base.tests
 import lsst.meas.extensions.gaap
+import lsst.utils.tests
 
 
 try:
@@ -42,7 +43,7 @@ except NameError:
     frame = 1
 
 
-def makeGalaxyExposure(scale, psfSigma=0.9, flux=1000., galSigma=3.7):
+def makeGalaxyExposure(scale, psfSigma=0.9, flux=1000., galSigma=3.7, variance=1.0):
     """Make an ideal exposure of circular Gaussian
 
     For the purpose of testing Gaussian Aperture and PSF algorithm (GAaP), this
@@ -78,7 +79,7 @@ def makeGalaxyExposure(scale, psfSigma=0.9, flux=1000., galSigma=3.7):
     exposure = afwImage.makeExposure(afwImage.makeMaskedImageFromArrays(galIm.array))
     exposure.setPsf(afwDetection.GaussianPsf(psfWidth, psfWidth, psfSigma))
 
-    exposure.variance.set(1.0)
+    exposure.variance.set(variance)
     exposure.mask.set(0)
     center = exposure.getBBox().getCenter()
 
@@ -92,6 +93,33 @@ def makeGalaxyExposure(scale, psfSigma=0.9, flux=1000., galSigma=3.7):
 class GaapFluxTestCase(lsst.utils.tests.TestCase):
     """Main test case for the GAaP plugin.
     """
+    def setUp(self):
+        self.center = lsst.geom.Point2D(100.0, 770.0)
+        self.bbox = lsst.geom.Box2I(lsst.geom.Point2I(-20, -30),
+                                    lsst.geom.Extent2I(240, 1600))
+        self.dataset = lsst.meas.base.tests.TestDataset(self.bbox)
+
+        # We will consider three sources in our test case
+        # recordId = 0: A bright point source
+        # recordId = 1: An elliptical (Gaussian) galaxy
+        # recordId = 2: A source near a corner
+        self.dataset.addSource(1000., self.center - lsst.geom.Extent2I(0, 100))
+        self.dataset.addSource(1000., self.center + lsst.geom.Extent2I(0, 100),
+                               afwGeom.Quadrupole(9., 9., 4.))
+        self.dataset.addSource(600., lsst.geom.Point2D(self.bbox.getMin()) + lsst.geom.Extent2I(10, 10))
+
+    def tearDown(self):
+        del self.center
+        del self.bbox
+        del self.dataset
+
+    def makeAlgorithm(self, gaapConfig=None):
+        schema = lsst.meas.base.tests.TestDataset.makeMinimalSchema()
+        if gaapConfig is None:
+            gaapConfig = lsst.meas.extensions.gaap.GaapFluxConfig()
+        gaapPlugin = lsst.meas.extensions.gaap.GaapFluxPlugin(gaapConfig, 'ext_gaap_GaapFlux', schema, None)
+        return gaapPlugin, schema
+
     def check(self, psfSigma=0.5, flux=1000., scalingFactors=[1.15], forced=False):
         """Check for non-negative values for GAaP instFlux and instFluxErr.
         """
@@ -100,7 +128,7 @@ class GaapFluxTestCase(lsst.utils.tests.TestCase):
         TaskClass = measBase.ForcedMeasurementTask if forced else measBase.SingleFrameMeasurementTask
 
         # Create an image of a tiny source
-        exposure, center = makeGalaxyExposure(scale, psfSigma, flux, galSigma=0.001)
+        exposure, center = makeGalaxyExposure(scale, psfSigma, flux, galSigma=0.001, variance=0.)
 
         measConfig = TaskClass.ConfigClass()
         algName = "ext_gaap_GaapFlux"
@@ -112,6 +140,7 @@ class GaapFluxTestCase(lsst.utils.tests.TestCase):
 
         algConfig = measConfig.plugins[algName]
         algConfig.scalingFactors = scalingFactors
+        algConfig.scaleByFwhm = True
 
         if forced:
             offset = geom.Extent2D(-12.3, 45.6)
@@ -152,7 +181,7 @@ class GaapFluxTestCase(lsst.utils.tests.TestCase):
         measCat = afwTable.SourceCatalog(schema)
         source = measCat.addNew()
         source.getTable().setMetadata(algMetadata)
-        ss = afwDetection.FootprintSet(exposure.getMaskedImage(), afwDetection.Threshold(0.1))
+        ss = afwDetection.FootprintSet(exposure.getMaskedImage(), afwDetection.Threshold(10.0))
         fp = ss.getFootprints()[0]
         source.setFootprint(fp)
 
@@ -165,23 +194,30 @@ class GaapFluxTestCase(lsst.utils.tests.TestCase):
 
         self.assertFalse(source.get(algName + "_flag"))  # algorithm succeeded
 
-        # We will check the accuracy of the measured flux in DM-29430.
-        # We simply check now if it produces a positive number (non-nan)
-        for sF in algConfig.scalingFactors:
-            for sigma in algConfig.sigmas:
-                baseName = algConfig._getGaapResultName(sF, sigma, algName)
-                self.assertTrue((source.get(baseName + "_instFlux") >= 0))
-                self.assertTrue((source.get(baseName + "_instFluxErr") >= 0))
+        # We first check if it produces a positive number (non-nan)
+        for baseName in algConfig.getAllGaapResultNames(algName):
+            self.assertTrue((source.get(baseName + "_instFlux") >= 0))
+            self.assertTrue((source.get(baseName + "_instFluxErr") >= 0))
 
-    def runGaap(self, forced, scalingFactors=(1.0, 1.1, 1.15, 1.2, 1.5, 2.0), psfSigmas=(1.7, 0.95, 1.3,)):
-        for psfSigma in psfSigmas:
-            self.check(psfSigma=psfSigma, forced=forced, scalingFactors=scalingFactors)
+        # For sF > 1, check that the measured value is close to the true value
+        for baseName in algConfig.getAllGaapResultNames(algName):
+            if "_1_0x_" not in baseName:
+                self.assertFloatsAlmostEqual(source.get(baseName + "_instFlux"), flux, rtol=0.1)
 
-    def testGaapUnforced(self):
-        self.runGaap(False)
+    def runGaap(self, forced, psfSigma, scalingFactors=(1.0, 1.05, 1.1, 1.15, 1.2, 1.5, 2.0)):
+        self.check(psfSigma=psfSigma, forced=forced, scalingFactors=scalingFactors)
 
-    def testGaapForced(self):
-        self.runGaap(True)
+    @lsst.utils.tests.methodParameters(psfSigma=(1.7, 0.95, 1.3,))
+    def testGaapPluginUnforced(self, psfSigma):
+        """Run GAaP as Single-frame measurement plugin.
+        """
+        self.runGaap(False, psfSigma)
+
+    @lsst.utils.tests.methodParameters(psfSigma=(1.7, 0.95, 1.3,))
+    def testGaapPluginForced(self, psfSigma):
+        """Run GAaP as forced measurement plugin.
+        """
+        self.runGaap(True, psfSigma)
 
 
 class TestMemory(lsst.utils.tests.MemoryTestCase):
