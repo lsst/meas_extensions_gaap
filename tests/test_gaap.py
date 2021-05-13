@@ -169,7 +169,7 @@ class GaapFluxTestCase(lsst.utils.tests.TestCase):
         # We simply check now if it produces a positive number (non-nan)
         for sF in algConfig.scalingFactors:
             for sigma in algConfig.sigmas:
-                baseName = algConfig.getGaapResultName(sF, sigma, algName)
+                baseName = algConfig._getGaapResultName(sF, sigma, algName)
                 self.assertTrue((source.get(baseName + "_instFlux") >= 0))
                 self.assertTrue((source.get(baseName + "_instFluxErr") >= 0))
 

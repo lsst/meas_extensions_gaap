@@ -122,7 +122,7 @@ class BaseGaapFluxConfig(measBase.BaseMeasurementPluginConfig):
         assert self.modelPsfMatch.kernel.active.alardNGauss == 1
 
     @classmethod
-    def getGaapResultName(cls, sF: float, sigma: float, name: Optional[str] = None) -> str:
+    def _getGaapResultName(cls, sF: float, sigma: float, name: Optional[str] = None) -> str:
         """Return the base name for GAaP fields
 
         For example, for a scaling factor of 1.15 for seeing and sigma of the
@@ -192,7 +192,7 @@ class BaseGaapFluxPlugin(measBase.GenericPlugin):
         # Flag definitions for each variant of GAaP measurement
         flagDefs = measBase.FlagDefinitionList()
         for sF, sigma in itertools.product(self.config.scalingFactors, self.config.sigmas):
-            baseName = self.ConfigClass.getGaapResultName(sF, sigma, name)
+            baseName = self.ConfigClass._getGaapResultName(sF, sigma, name)
             baseString = f"with {sigma} aperture after scaling the seeing by {sF}"
             schema.addField(schema.join(baseName, "instFlux"), type="D",
                             doc="GAaP Flux " + baseString)
@@ -200,7 +200,7 @@ class BaseGaapFluxPlugin(measBase.GenericPlugin):
                             doc="GAaP Flux error " + baseString)
 
             # Remove the prefix_ since FlagHandler prepends it
-            middleName = self.ConfigClass.getGaapResultName(sF, sigma)
+            middleName = self.ConfigClass._getGaapResultName(sF, sigma)
             flagDefs.add(schema.join(middleName, "flag_bigpsf"), ("The Gaussianized PSF is "
                                                                   "bigger than the aperture"
                                                                   ))
@@ -297,7 +297,7 @@ class BaseGaapFluxPlugin(measBase.GenericPlugin):
                 continue
 
             for sigma in self.config.sigmas:
-                baseName = self.ConfigClass.getGaapResultName(sF, sigma, self.name)
+                baseName = self.ConfigClass._getGaapResultName(sF, sigma, self.name)
                 if targetSigma >= sigma:
                     flagKey = measRecord.schema.join(baseName, "flag_bigpsf")
                     measRecord.set(flagKey, 1)
