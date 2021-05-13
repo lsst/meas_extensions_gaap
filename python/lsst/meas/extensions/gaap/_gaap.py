@@ -275,13 +275,14 @@ class BaseGaapFluxPlugin(measBase.GenericPlugin):
         footprint = measRecord.getFootprint()
         bbox = footprint.getBBox()
 
-        # The kernelSize is guaranteed to be odd, say 2k+1 pixels (default is
-        # 21). The flux inside the footprint is smeared by k pixels on either
-        # side, which is region of interest. The PSF matching sets NO_DATA mask
-        # bit in the outermost k pixels. To account for these nans in the
-        # edges, the subExposure needs to be expanded by another k pixels.
-        # So grow the bounding box initially by k pixels on either side.
-        pixToGrow = self.config.modelPsfMatch.kernel.active.kernelSize//2
+        # The kernelSize is guaranteed to be odd, say 2N+1 pixels (N=10 by
+        # default). The flux inside the footprint is smeared by N pixels on
+        # either side, which is region of interest. The PSF matching sets
+        # NO_DATA mask bit in the outermost N pixels. To account for these nans
+        # along the edges, the subExposure needs to be expanded by another
+        # N pixels. So grow the bounding box initially by 2N pixels on either
+        # side.
+        pixToGrow = self.config.modelPsfMatch.kernel.active.kernelSize - 1
         bbox.grow(pixToGrow)
 
         # The bounding box may become too big and go out of bounds for sources
@@ -303,8 +304,12 @@ class BaseGaapFluxPlugin(measBase.GenericPlugin):
         # TODO: DM-27407 will re-Gaussianize the exposure to make the PSF even
         # more Gaussian-like
 
-        # k pixels around the edges will have NO_DATA mask bit set,
-        # where 2k+1 is the kernelSize. Set k number of pixels to erode without
+        # Do not let the variance plane be rescaled since we handle it
+        # carefully later in DM-27088
+        result.psfMatchedExposure.variance.array = subExposure.variance.array
+
+        # N pixels around the edges will have NO_DATA mask bit set,
+        # where 2N+1 is the kernelSize. Set N number of pixels to erode without
         # reusing pixToGrow, as pixToGrow can be anything in principle.
         pixToErode = self.config.modelPsfMatch.kernel.active.kernelSize//2
         bbox = bbox.erodedBy(pixToErode)
@@ -336,6 +341,7 @@ class BaseGaapFluxPlugin(measBase.GenericPlugin):
                 if targetSigma >= sigma:
                     flagKey = measRecord.schema.join(baseName, "flag_bigpsf")
                     measRecord.set(flagKey, 1)
+                    continue
 
                 aperSigma2 = sigma**2 - targetSigma**2
                 aperShape = afwGeom.Quadrupole(aperSigma2, aperSigma2, 0.0)
