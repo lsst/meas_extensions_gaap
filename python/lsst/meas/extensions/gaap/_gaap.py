@@ -30,6 +30,7 @@ import lsst.afw.image as afwImage
 import lsst.afw.detection as afwDetection
 import lsst.afw.geom as afwGeom
 import lsst.meas.base as measBase
+from lsst.meas.base.fluxUtilities import FluxResultKey
 import lsst.pex.config as pexConfig
 from lsst.ip.diffim import ModelPsfMatchTask
 from lsst.pex.exceptions import RuntimeError as pexRuntimeError
@@ -340,13 +341,16 @@ class BaseGaapFluxPlugin(measBase.GenericPlugin):
                 aperShape = afwGeom.Quadrupole(aperSigma2, aperSigma2, 0.0)
                 fluxResult = measBase.SdssShapeAlgorithm.computeFixedMomentsFlux(convolved.getMaskedImage(),
                                                                                  aperShape, center)
-                fluxScaling = sigma**2/aperSigma2  # Eq. A16 of Kuijken et al. (2015)
+                # Calculate the scale factors by which to scale the fluxes and
+                # their standard errors.
+                fluxScaling = 0.5*sigma**2/aperSigma2  # Eq. A16 of Kuijken et al. (2015)
+                fluxErrScaling = 1.0  # TODO: DM-27088 will calculate this
 
-                # Copy result to record
-                instFluxKey = measRecord.schema.join(baseName, "instFlux")
-                instFluxErrKey = measRecord.schema.join(baseName, "instFluxErr")
-                measRecord.set(instFluxKey, fluxScaling*fluxResult.instFlux)
-                measRecord.set(instFluxErrKey, fluxScaling*fluxResult.instFluxErr)
+                # Scale the fluxResult and copy result to record
+                fluxResult.instFlux *= fluxScaling
+                fluxResult.instFluxErr *= fluxScaling*fluxErrScaling
+                fluxResultKey = FluxResultKey(measRecord.schema[baseName])
+                fluxResultKey.set(measRecord, fluxResult)
 
         # Raise GaapConvolutionError before exiting the plugin
         # if the collection of errors is not empty
