@@ -89,7 +89,8 @@ class BaseGaapFluxConfig(measBase.BaseMeasurementPluginConfig):
         doc="List of factors with which the seeing should be scaled to obtain the "
             "sigma values of the target Gaussian PSF. The factor should not be less "
             "than unity to avoid the PSF matching task to go into deconvolution mode "
-            "and should ideally be slightly greater than unity.")
+            "and should ideally be slightly greater than unity. The runtime of the "
+            "plugin scales linearly with the number of elements in the list.")
 
     _modelPsfMatch = pexConfig.ConfigurableField(
         target=ModelPsfMatchTask,
@@ -144,7 +145,7 @@ class BaseGaapFluxConfig(measBase.BaseMeasurementPluginConfig):
         assert self._modelPsfMatch.kernel.active.alardNGauss == 1
 
     @staticmethod
-    def _getGaapResultName(sF: float, sigma: Union[float, str], name: Optional[str] = None) -> str:
+    def _getGaapResultName(scalingFactor: float, sigma: Union[float, str], name: Optional[str] = None) -> str:
         """Return the base name for GAaP fields
 
         For example, for a scaling factor of 1.15 for seeing and sigma of the
@@ -162,7 +163,7 @@ class BaseGaapFluxConfig(measBase.BaseMeasurementPluginConfig):
 
         Parameters
         ----------
-        sF : `float`
+        scalingFactor : `float`
             The factor by which the trace radius of the PSF must be scaled.
         sigma : `float` or `str`
             Sigma of the effective Gaussian aperture (PSF-convolved explicit
@@ -178,7 +179,7 @@ class BaseGaapFluxConfig(measBase.BaseMeasurementPluginConfig):
         baseName : `str`
             Base name for GAaP field.
         """
-        suffix = "_".join((str(sF).replace(".", "_")+"x", str(sigma).replace(".", "_")))
+        suffix = "_".join((str(scalingFactor).replace(".", "_")+"x", str(sigma).replace(".", "_")))
         if name is None:
             return suffix
         return "_".join((name, suffix))
@@ -207,8 +208,8 @@ class BaseGaapFluxConfig(measBase.BaseMeasurementPluginConfig):
         """
         scalingFactors = self.scalingFactors
         sigmas = self._sigmas
-        baseNames = (self._getGaapResultName(sF, sigma, name)
-                     for sF, sigma in itertools.product(scalingFactors, sigmas))
+        baseNames = (self._getGaapResultName(scalingFactor, sigma, name)
+                     for scalingFactor, sigma in itertools.product(scalingFactors, sigmas))
         return baseNames
 
 
@@ -242,24 +243,24 @@ class BaseGaapFluxPlugin(measBase.GenericPlugin):
 
         # Flag definitions for each variant of GAaP measurement
         flagDefs = measBase.FlagDefinitionList()
-        for sF, sigma in itertools.product(self.config.scalingFactors, self.config.sigmas):
-            baseName = self.ConfigClass._getGaapResultName(sF, sigma, name)
-            baseString = f"with {sigma} aperture after multiplying the seeing by {sF}"
+        for scalingFactor, sigma in itertools.product(self.config.scalingFactors, self.config.sigmas):
+            baseName = self.ConfigClass._getGaapResultName(scalingFactor, sigma, name)
+            baseString = f"with {sigma} aperture after multiplying the seeing by {scalingFactor}"
             schema.addField(schema.join(baseName, "instFlux"), type="D",
                             doc="GAaP Flux " + baseString)
             schema.addField(schema.join(baseName, "instFluxErr"), type="D",
                             doc="GAaP Flux error " + baseString)
 
             # Remove the prefix_ since FlagHandler prepends it
-            middleName = self.ConfigClass._getGaapResultName(sF, sigma)
+            middleName = self.ConfigClass._getGaapResultName(scalingFactor, sigma)
             flagDefs.add(schema.join(middleName, "flag_bigpsf"), ("The Gaussianized PSF is "
                                                                   "bigger than the aperture"
                                                                   ))
         # PSF photometry
         if self.config.doPsfPhotometry:
-            for sF in self.config.scalingFactors:
-                baseName = self.ConfigClass._getGaapResultName(sF, "PsfFlux", name)
-                baseString = f"with PSF aperture after multiplying the seeing by {sF}"
+            for scalingFactor in self.config.scalingFactors:
+                baseName = self.ConfigClass._getGaapResultName(scalingFactor, "PsfFlux", name)
+                baseString = f"with PSF aperture after multiplying the seeing by {scalingFactor}"
                 schema.addField(schema.join(baseName, "instFlux"), type="D",
                                 doc="GAaP PsfFlux " + baseString)
                 schema.addField(schema.join(baseName, "instFluxErr"), type="D",
@@ -405,14 +406,14 @@ class BaseGaapFluxPlugin(measBase.GenericPlugin):
 
         seeing = psf.computeShape(center).getTraceRadius()
         errorCollection = dict()
-        for sF in self.config.scalingFactors:
-            targetSigma = sF*seeing
+        for scalingFactor in self.config.scalingFactors:
+            targetSigma = scalingFactor*seeing
             stampSize = self.config._modelPsfDimension
             targetPsf = afwDetection.GaussianPsf(stampSize, stampSize, targetSigma)
             try:
                 result = self._convolve(exposure, targetPsf, measRecord)
             except Exception as error:
-                errorCollection[str(sF)] = error
+                errorCollection[str(scalingFactor)] = error
                 continue
 
             convolved = result.psfMatchedExposure.getMaskedImage()
@@ -420,7 +421,7 @@ class BaseGaapFluxPlugin(measBase.GenericPlugin):
 
             # Iterate over apertures
             for sigma in self.config._sigmas:
-                baseName = self.ConfigClass._getGaapResultName(sF, sigma, self.name)
+                baseName = self.ConfigClass._getGaapResultName(scalingFactor, sigma, self.name)
                 # Calculate the aperture shape and thepre-factor in
                 # Eq. A16 of Kuijken et al. (2015) to scale the flux.
                 # Include an extra factor of 0.5 to undo the normalization

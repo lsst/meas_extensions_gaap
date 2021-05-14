@@ -204,7 +204,7 @@ class GaapFluxTestCase(lsst.utils.tests.TestCase):
             self.assertTrue((source.get(baseName + "_instFlux") >= 0))
             self.assertTrue((source.get(baseName + "_instFluxErr") >= 0))
 
-        # For sF > 1, check that the measured value is close to the true value
+        # For scalingFactor > 1, check if the measured value is close to truth.
         for baseName in algConfig.getAllGaapResultNames(algName):
             if "_1_0x_" not in baseName:
                 rtol = 0.1 if "PsfFlux" not in baseName else 0.2
@@ -276,9 +276,9 @@ class GaapFluxTestCase(lsst.utils.tests.TestCase):
         self.assertFalse(record[algName + "_flag"])
         self.assertFalse(record[algName + "_flag_edge"])
         # Ensure that flag_bigpsf is set if sigma < scalingFactor * seeing
-        for sF, sigma in itertools.product(gaapConfig.scalingFactors, gaapConfig.sigmas):
-            targetSigma = sF*seeing
-            baseName = gaapConfig._getGaapResultName(sF, sigma, algName)
+        for scalingFactor, sigma in itertools.product(gaapConfig.scalingFactors, gaapConfig.sigmas):
+            targetSigma = scalingFactor*seeing
+            baseName = gaapConfig._getGaapResultName(scalingFactor, sigma, algName)
             if targetSigma >= sigma:
                 self.assertTrue(record[baseName+"_flag_bigpsf"])
             else:
@@ -348,8 +348,8 @@ class GaapFluxTestCase(lsst.utils.tests.TestCase):
         record = catalog[0]
         center = self.center
         seeing = exposure.getPsf().computeShape(center).getDeterminantRadius()
-        for sF in gaapConfig.scalingFactors:
-            targetSigma = sF*seeing
+        for scalingFactor in gaapConfig.scalingFactors:
+            targetSigma = scalingFactor*seeing
             modelPsf = afwDetection.GaussianPsf(algorithm.config._modelPsfDimension,
                                                 algorithm.config._modelPsfDimension,
                                                 targetSigma)
