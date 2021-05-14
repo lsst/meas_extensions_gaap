@@ -391,6 +391,8 @@ class BaseGaapFluxPlugin(measBase.GenericPlugin):
                 continue
 
             convolved = result.psfMatchedExposure[bbox]
+            kernelAcf = self._computeKernelAcf(result.psfMatchingKernel)
+
             for sigma in self.config.sigmas:
                 baseName = self.ConfigClass._getGaapResultName(sF, sigma, self.name)
                 if targetSigma >= sigma:
@@ -402,10 +404,16 @@ class BaseGaapFluxPlugin(measBase.GenericPlugin):
                 aperShape = afwGeom.Quadrupole(aperSigma2, aperSigma2, 0.0)
                 fluxResult = measBase.SdssShapeAlgorithm.computeFixedMomentsFlux(convolved.getMaskedImage(),
                                                                                  aperShape, center)
-                # Calculate the scale factors by which to scale the fluxes and
-                # their standard errors.
-                fluxScaling = 0.5*sigma**2/aperSigma2  # Eq. A16 of Kuijken et al. (2015)
-                fluxErrScaling = 1.0  # TODO: DM-27088 will calculate this
+                # Calculate the pre-factor in Eq. A16 of Kuijken et al. (2015)
+                # to scale the flux. Include an extra factor of 0.5 to undo
+                # the normalization factor of 2 in `computeFixedMomentsFlux`.
+                fluxScaling = 0.5*sigma**2/aperSigma2
+
+                # Calculate the integral in Eq. A17 of Kuijken et al. (2015)
+                # ``fluxErrScaling`` contains the factors not captured by
+                # ``fluxScaling`` and `instFluxErr`. It is 1 theoretically
+                # if ``kernelAcf`` is a Dirac-delta function.
+                fluxErrScaling = self._getFluxErrScaling(kernelAcf, aperShape)
 
                 # Scale the fluxResult and copy result to record
                 fluxResult.instFlux *= fluxScaling
