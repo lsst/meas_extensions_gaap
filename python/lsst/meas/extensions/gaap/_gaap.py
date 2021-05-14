@@ -91,11 +91,11 @@ class BaseGaapFluxConfig(measBase.BaseMeasurementPluginConfig):
             "than unity to avoid the PSF matching task to go into deconvolution mode "
             "and should ideally be slightly greater than unity.")
 
-    modelPsfMatch = pexConfig.ConfigurableField(
+    _modelPsfMatch = pexConfig.ConfigurableField(
         target=ModelPsfMatchTask,
         doc="PSF Gaussianization Task")
 
-    modelPsfDimension = pexConfig.Field(
+    _modelPsfDimension = pexConfig.Field(
         dtype=int,
         default=65,
         check=_isOdd,
@@ -111,13 +111,17 @@ class BaseGaapFluxConfig(measBase.BaseMeasurementPluginConfig):
 
     # scaleByFwm is the only config field of modelPsfMatch Task that we allow
     # the user to set without explicitly setting the modelPsfMatch config.
+    # It is intended to abstract away the underlying implementation.
     @property
     def scaleByFwhm(self) -> bool:
-        return self.modelPsfMatch.kernel.active.scaleByFwhm
+        """Config parameter of the PSF Matching task.
+        Scale kernelSize, alardGaussians by input Fwhm?
+        """
+        return self._modelPsfMatch.kernel.active.scaleByFwhm
 
     @scaleByFwhm.setter
-    def scaleByFwhm(self, value) -> None:
-        self.modelPsfMatch.kernel.active.scaleByFwhm = value
+    def scaleByFwhm(self, value: bool) -> None:
+        self._modelPsfMatch.kernel.active.scaleByFwhm = value
 
     @property
     def _sigmas(self) -> list:
@@ -128,16 +132,16 @@ class BaseGaapFluxConfig(measBase.BaseMeasurementPluginConfig):
 
     def setDefaults(self) -> None:
         # TODO: DM-27482 might change these values.
-        self.modelPsfMatch.kernel.active.alardNGauss = 1
-        self.modelPsfMatch.kernel.active.alardDegGaussDeconv = 1
-        self.modelPsfMatch.kernel.active.alardDegGauss = [8]
-        self.modelPsfMatch.kernel.active.alardGaussBeta = 1.0
-        self.modelPsfMatch.kernel.active.spatialKernelOrder = 0
+        self._modelPsfMatch.kernel.active.alardNGauss = 1
+        self._modelPsfMatch.kernel.active.alardDegGaussDeconv = 1
+        self._modelPsfMatch.kernel.active.alardDegGauss = [8]
+        self._modelPsfMatch.kernel.active.alardGaussBeta = 1.0
+        self._modelPsfMatch.kernel.active.spatialKernelOrder = 0
 
     def validate(self):
         super().validate()
-        self.modelPsfMatch.validate()
-        assert self.modelPsfMatch.kernel.active.alardNGauss == 1
+        self._modelPsfMatch.validate()
+        assert self._modelPsfMatch.kernel.active.alardNGauss == 1
 
     @staticmethod
     def _getGaapResultName(sF: float, sigma: Union[float, str], name: Optional[str] = None) -> str:
@@ -265,7 +269,7 @@ class BaseGaapFluxPlugin(measBase.GenericPlugin):
         self.EdgeFlagKey = schema.addField(schema.join(name, "flag_edge"), type="Flag",
                                            doc="Source is too close to the edge")
 
-        self.psfMatchTask = self.config.modelPsfMatch.target(config=self.config.modelPsfMatch)
+        self.psfMatchTask = self.config._modelPsfMatch.target(config=self.config._modelPsfMatch)
 
     @classmethod
     def getExecutionOrder(cls) -> float:
@@ -359,7 +363,7 @@ class BaseGaapFluxPlugin(measBase.GenericPlugin):
         # along the edges, the subExposure needs to be expanded by another
         # N pixels. So grow the bounding box initially by 2N pixels on either
         # side.
-        pixToGrow = self.config.modelPsfMatch.kernel.active.kernelSize - 1
+        pixToGrow = self.config._modelPsfMatch.kernel.active.kernelSize - 1
         bbox.grow(pixToGrow)
 
         # The bounding box may become too big and go out of bounds for sources
@@ -388,7 +392,7 @@ class BaseGaapFluxPlugin(measBase.GenericPlugin):
         # N pixels around the edges will have NO_DATA mask bit set,
         # where 2N+1 is the kernelSize. Set N number of pixels to erode without
         # reusing pixToGrow, as pixToGrow can be anything in principle.
-        pixToErode = self.config.modelPsfMatch.kernel.active.kernelSize//2
+        pixToErode = self.config._modelPsfMatch.kernel.active.kernelSize//2
         result.psfMatchedExposure = result.psfMatchedExposure[bbox.erodedBy(pixToErode)]
         return result
 
@@ -403,7 +407,7 @@ class BaseGaapFluxPlugin(measBase.GenericPlugin):
         errorCollection = dict()
         for sF in self.config.scalingFactors:
             targetSigma = sF*seeing
-            stampSize = self.config.modelPsfDimension
+            stampSize = self.config._modelPsfDimension
             targetPsf = afwDetection.GaussianPsf(stampSize, stampSize, targetSigma)
             try:
                 result = self._convolve(exposure, targetPsf, measRecord)

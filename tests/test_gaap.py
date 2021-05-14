@@ -350,8 +350,8 @@ class GaapFluxTestCase(lsst.utils.tests.TestCase):
         seeing = exposure.getPsf().computeShape(center).getDeterminantRadius()
         for sF in gaapConfig.scalingFactors:
             targetSigma = sF*seeing
-            modelPsf = afwDetection.GaussianPsf(algorithm.config.modelPsfDimension,
-                                                algorithm.config.modelPsfDimension,
+            modelPsf = afwDetection.GaussianPsf(algorithm.config._modelPsfDimension,
+                                                algorithm.config._modelPsfDimension,
                                                 targetSigma)
             result = algorithm._generic._convolve(exposure, modelPsf, record)
             kernel = result.psfMatchingKernel
