@@ -36,6 +36,8 @@ import lsst.meas.base as measBase
 import lsst.meas.base.tests
 import lsst.meas.extensions.gaap
 import lsst.utils.tests
+import numpy as np
+import scipy
 
 
 try:
@@ -285,6 +287,34 @@ class GaapFluxTestCase(lsst.utils.tests.TestCase):
         algorithm.measure(record, exposure)
         self.assertTrue(record[algName + "_flag_edge"])
         self.assertFalse(record[algName + "_flag"])
+
+    def getFluxErrScaling(self, kernel, aperShape):
+        """Returns the value by which the standard error has to be scaled due
+        to noise correlations.
+
+        This is an alternative implementation to the `_getFluxErrScaling`
+        method of `BaseGaapFluxPlugin`, but is less efficient.
+
+        Parameters
+        ----------
+        `kernel` : `~lsst.afw.math.Kernel`
+            The PSF-Gaussianization kernel.
+
+        Returns
+        -------
+        fluxErrScaling : `float`
+            The factor by which the standard error on GAaP flux must be scaled.
+        """
+        kim = afwImage.ImageD(kernel.getDimensions())
+        kernel.computeImage(kim, False)
+        weight = galsim.Image(np.zeros_like(kim.array))
+        aperSigma = aperShape.getDeterminantRadius()
+        gauss = galsim.Gaussian(sigma=aperSigma, flux=2*np.pi*aperSigma**2)
+        weight = gauss.drawImage(image=weight, scale=1.0, method='no_pixel')
+        kwarr = scipy.signal.convolve2d(weight.array, kim.array, boundary='fill')
+        fluxErrScaling = np.sqrt(np.sum(kwarr*kwarr))
+        fluxErrScaling /= np.sqrt(np.pi*aperSigma**2)
+        return fluxErrScaling
 
     @lsst.utils.tests.methodParameters(noise=(0.001, 0.01, 0.1))
     def testMonteCarlo(self, noise, recordId=1, sigmas=[3.0, 4.0], scalingFactors=[1.1, 1.15, 1.2, 1.3, 1.4]):
