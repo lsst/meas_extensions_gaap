@@ -265,6 +265,40 @@ class BaseGaapFluxPlugin(measBase.GenericPlugin):
         acfImage = afwImage.ImageD(acfArray)
         return acfImage
 
+    @staticmethod
+    def _getFluxErrScaling(kernelAcf: lsst.afw.image.Image,  # noqa: F821
+                           aperShape: lsst.afw.geom.Quadrupole) -> float:  # noqa: F821
+        """Calculate the value by which the standard error has to be scaled due
+        to noise correlations.
+
+        This calculates the correction to apply to the naively computed
+        `instFluxErr` to account for correlations in the pixel noise introduced
+        in the PSF-Gaussianization step.
+        This method performs the integral in Eq. A17 of Kuijken et al. (2015).
+
+        The returned value equals
+        :math:`\\int\\mathrm{d}x C^G(x) \\exp(-x^T Q^{-1}x/4)`
+        where :math: `Q` is ``aperShape`` and :math: `C^G(x)` is ``kernelAcf``.
+
+        Parameters
+        ----------
+        kernelAcf : `~lsst.afw.image.Image`
+            The auto-correlation function (ACF) of the PSF matching kernel.
+        aperShape : `~lsst.afw.geom.Quadrupole`
+            The shape parameter of the Gaussian function which was used to
+            measure GAaP flux.
+
+        Returns
+        -------
+        fluxErrScaling : `float`
+            The factor by which the standard error on GAaP flux must be scaled.
+        """
+        aperShapeX2 = afwGeom.Quadrupole(2*aperShape.getParameterVector())
+        corrFlux = measBase.SdssShapeAlgorithm.computeFixedMomentsFlux(kernelAcf, aperShapeX2,
+                                                                       kernelAcf.getBBox().getCenter())
+        fluxErrScaling = (0.5*corrFlux.instFlux)**0.5
+        return fluxErrScaling
+
     def _convolve(self, exposure: afwImage.Exposure, modelPsf: afwDetection.GaussianPsf,
                   measRecord: lsst.afw.table.SourceRecord) -> tuple[lsst.pipe.base.Struct,  # noqa: F821
                                                                     lsst.geom.Box2I]:  # noqa: F821
