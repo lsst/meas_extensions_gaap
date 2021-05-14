@@ -33,6 +33,7 @@ import lsst.meas.base as measBase
 from lsst.meas.base.fluxUtilities import FluxResultKey
 import lsst.pex.config as pexConfig
 from lsst.ip.diffim import ModelPsfMatchTask
+from lsst.pex.exceptions import InvalidParameterError
 from lsst.pex.exceptions import RuntimeError as pexRuntimeError
 import scipy.signal
 
@@ -414,21 +415,38 @@ class BaseGaapFluxPlugin(measBase.GenericPlugin):
             convolved = result.psfMatchedExposure
             kernelAcf = self._computeKernelAcf(result.psfMatchingKernel)
 
-            for sigma in self.config.sigmas:
+            # Iterate over apertures
+            for sigma in self.config._sigmas:
                 baseName = self.ConfigClass._getGaapResultName(sF, sigma, self.name)
-                if targetSigma >= sigma:
-                    flagKey = measRecord.schema.join(baseName, "flag_bigpsf")
-                    measRecord.set(flagKey, 1)
-                    continue
+                # Calculate the aperture shape and thepre-factor in
+                # Eq. A16 of Kuijken et al. (2015) to scale the flux.
+                # Include an extra factor of 0.5 to undo the normalization
+                # factor of 2 in `computeFixedMomentsFlux`.
+                if sigma == "PsfFlux":
+                    # PSF photometry case
+                    aperSigma2 = targetSigma**2
+                    aperShape = afwGeom.Quadrupole(aperSigma2, aperSigma2, 0.0)
+                    fluxScaling = 1.0  # Eq. A16 of Kuijken et al. (2015)
+                else:
+                    try:
+                        if sigma == "Optimal":  # Hook for DM-29290
+                            # Optimal elliptical aperture case
+                            # TODO: DM-29290
+                            # Set `normalize` to True to check if aperShape is valid.
+                            continue
+                        else:
+                            aperSigma2 = sigma**2 - targetSigma**2
+                            aperShape = afwGeom.Quadrupole(aperSigma2, aperSigma2, 0.0,
+                                                           normalize=True)
+                            fluxScaling = 0.5*sigma**2/aperSigma2
+                    except (InvalidParameterError, ZeroDivisionError):
+                        # Raised when the aperture is invalid
+                        flagKey = measRecord.schema.join(baseName, "flag_bigpsf")
+                        measRecord.set(flagKey, 1)
+                        continue
 
-                aperSigma2 = sigma**2 - targetSigma**2
-                aperShape = afwGeom.Quadrupole(aperSigma2, aperSigma2, 0.0)
                 fluxResult = measBase.SdssShapeAlgorithm.computeFixedMomentsFlux(convolved.getMaskedImage(),
                                                                                  aperShape, center)
-                # Calculate the pre-factor in Eq. A16 of Kuijken et al. (2015)
-                # to scale the flux. Include an extra factor of 0.5 to undo
-                # the normalization factor of 2 in `computeFixedMomentsFlux`.
-                fluxScaling = 0.5*sigma**2/aperSigma2
 
                 # Calculate the integral in Eq. A17 of Kuijken et al. (2015)
                 # ``fluxErrScaling`` contains the factors not captured by
