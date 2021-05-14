@@ -100,6 +100,14 @@ class BaseGaapFluxConfig(measBase.BaseMeasurementPluginConfig):
         check=_isOdd,
         doc="The dimensions (width and height) of the target PSF image in pixels. Must be odd.")
 
+    doPsfPhotometry = pexConfig.Field(
+        dtype=bool,
+        default=False,
+        doc=("Perform PSF photometry after PSF-Gaussianization to validate Gaussianization accuracy? "
+             "This does not produce consistent color estimates."
+             )
+    )
+
     # scaleByFwm is the only config field of modelPsfMatch Task that we allow
     # the user to set without explicitly setting the modelPsfMatch config.
     @property
