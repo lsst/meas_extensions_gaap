@@ -24,7 +24,7 @@ from __future__ import annotations
 
 __all__ = ("GaapFluxPlugin", "GaapFluxConfig", "ForcedGaapFluxPlugin", "ForcedGaapFluxConfig")
 
-from typing import Optional, Generator
+from typing import Generator, Optional, Union
 import itertools
 import lsst.afw.image as afwImage
 import lsst.afw.detection as afwDetection
@@ -132,7 +132,7 @@ class BaseGaapFluxConfig(measBase.BaseMeasurementPluginConfig):
         assert self.modelPsfMatch.kernel.active.alardNGauss == 1
 
     @staticmethod
-    def _getGaapResultName(sF: float, sigma: float, name: Optional[str] = None) -> str:
+    def _getGaapResultName(sF: float, sigma: Union[float, str], name: Optional[str] = None) -> str:
         """Return the base name for GAaP fields
 
         For example, for a scaling factor of 1.15 for seeing and sigma of the
@@ -152,9 +152,9 @@ class BaseGaapFluxConfig(measBase.BaseMeasurementPluginConfig):
         ----------
         sF : `float`
             The factor by which the trace radius of the PSF must be scaled.
-        sigma : `float`
+        sigma : `float` or `str`
             Sigma of the effective Gaussian aperture (PSF-convolved explicit
-            aperture).
+            aperture) or "PsfFlux" for PSF photometry post PSF-Gaussianization.
         name : `str`, optional
             The exact registered name of the GAaP plugin, typically either
             "ext_gaap_GaapFlux" or "undeblended_ext_gaap_GaapFlux". If ``name``
