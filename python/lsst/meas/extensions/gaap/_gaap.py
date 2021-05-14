@@ -118,6 +118,13 @@ class BaseGaapFluxConfig(measBase.BaseMeasurementPluginConfig):
     def scaleByFwhm(self, value) -> None:
         self.modelPsfMatch.kernel.active.scaleByFwhm = value
 
+    @property
+    def _sigmas(self) -> list:
+        """List of values set in ``sigmas`` along with special apertures such
+        as "PsfFlux" if applicable.
+        """
+        return self.sigmas.list() + ["PsfFlux"]*self.doPsfPhotometry
+
     def setDefaults(self) -> None:
         # TODO: DM-27482 might change these values.
         self.modelPsfMatch.kernel.active.alardNGauss = 1
@@ -177,7 +184,8 @@ class BaseGaapFluxConfig(measBase.BaseMeasurementPluginConfig):
         For example, if the plugin is configured with `scalingFactors` = [1.15]
         and `sigmas` = [4.0, 5.0] the returned expression would yield
         ("ext_gaap_GaapFlux_1_15x_4_0", "ext_gaap_GaapFlux_1_15x_5_0") when
-        called with ``name`` = "ext_gaap_GaapFlux".
+        called with ``name`` = "ext_gaap_GaapFlux". It will also generate
+        "ext_gaap_GaapFlux_1_15x_PsfFlux" if `doPsfPhotometry` is True.
 
         Parameters
         ----------
@@ -193,7 +201,7 @@ class BaseGaapFluxConfig(measBase.BaseMeasurementPluginConfig):
             A generator expression yielding all the base names.
         """
         scalingFactors = self.scalingFactors
-        sigmas = self.sigmas
+        sigmas = self._sigmas
         baseNames = (self._getGaapResultName(sF, sigma, name)
                      for sF, sigma in itertools.product(scalingFactors, sigmas))
         return baseNames
