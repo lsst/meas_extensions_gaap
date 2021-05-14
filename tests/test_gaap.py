@@ -412,9 +412,8 @@ class GaapFluxTestCase(lsst.utils.tests.TestCase):
             # We compare the mean of the noisy measurements to its
             # corresponding noiseless measurement instead of the true value
             instFlux = recordNoiseless[instFluxKey]
-            # TODO: DM-27088 will set a saner bar for uncertainty estimates
-            self.assertFloatsAlmostEqual(instFluxErrMean, instFluxStdDev, rtol=0.7)
-            self.assertLess(abs(instFluxMean - instFlux), 3.0*instFluxErrMean/nSamples**0.5)
+            self.assertFloatsAlmostEqual(instFluxErrMean, instFluxStdDev, rtol=0.02)
+            self.assertLess(abs(instFluxMean - instFlux), 2.0*instFluxErrMean/nSamples**0.5)
 
 
 class TestMemory(lsst.utils.tests.MemoryTestCase):
