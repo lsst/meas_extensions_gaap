@@ -36,6 +36,8 @@ import lsst.meas.base as measBase
 import lsst.meas.base.tests
 import lsst.meas.extensions.gaap
 import lsst.utils.tests
+import numpy as np
+import scipy
 
 
 try:
@@ -286,6 +288,81 @@ class GaapFluxTestCase(lsst.utils.tests.TestCase):
         self.assertTrue(record[algName + "_flag_edge"])
         self.assertFalse(record[algName + "_flag"])
 
+    def getFluxErrScaling(self, kernel, aperShape):
+        """Returns the value by which the standard error has to be scaled due
+        to noise correlations.
+
+        This is an alternative implementation to the `_getFluxErrScaling`
+        method of `BaseGaapFluxPlugin`, but is less efficient.
+
+        Parameters
+        ----------
+        `kernel` : `~lsst.afw.math.Kernel`
+            The PSF-Gaussianization kernel.
+
+        Returns
+        -------
+        fluxErrScaling : `float`
+            The factor by which the standard error on GAaP flux must be scaled.
+        """
+        kim = afwImage.ImageD(kernel.getDimensions())
+        kernel.computeImage(kim, False)
+        weight = galsim.Image(np.zeros_like(kim.array))
+        aperSigma = aperShape.getDeterminantRadius()
+        gauss = galsim.Gaussian(sigma=aperSigma, flux=2*np.pi*aperSigma**2)
+        weight = gauss.drawImage(image=weight, scale=1.0, method='no_pixel')
+        kwarr = scipy.signal.convolve2d(weight.array, kim.array, boundary='fill')
+        fluxErrScaling = np.sqrt(np.sum(kwarr*kwarr))
+        fluxErrScaling /= np.sqrt(np.pi*aperSigma**2)
+        return fluxErrScaling
+
+    def testCorrelatedNoiseError(self, sigmas=[3.0, 4.0], scalingFactors=[1.15, 1.2, 1.25, 1.3, 1.4]):
+        """Test the scaling to standard error due to correlated noise.
+
+        The uncertainty estimate on GAaP fluxes is scaled by an amount
+        determined by the auto-correlation function of the PSF-matching kernel;
+        see Eqs. A11 & A17 of Kuijken et al. (2015). This test ensures that the
+        calculation of the scaling factors matches the analytical expression
+        when the PSF-matching kernel is a Gaussian.
+
+        Parameters
+        ----------
+        sigmas : `list` [`float`], optional
+            A list of effective Gaussian aperture sizes.
+        scalingFactors : `list` [`float`], optional
+            A list of factors by which the PSF size must be scaled.
+        """
+        # Create an image of an extended source
+        gaapConfig = lsst.meas.extensions.gaap.GaapFluxConfig(sigmas=sigmas, scalingFactors=scalingFactors)
+        gaapConfig.scaleByFwhm = True
+
+        algorithm, schema = self.makeAlgorithm(gaapConfig)
+        exposure, catalog = self.dataset.realize(0.0, schema)
+        record = catalog[0]
+        center = self.center
+        seeing = exposure.getPsf().computeShape(center).getDeterminantRadius()
+        for sF in gaapConfig.scalingFactors:
+            targetSigma = sF*seeing
+            modelPsf = afwDetection.GaussianPsf(algorithm.config.modelPsfDimension,
+                                                algorithm.config.modelPsfDimension,
+                                                targetSigma)
+            result = algorithm._generic._convolve(exposure, modelPsf, record)
+            kernel = result.psfMatchingKernel
+            kernelAcf = algorithm._generic._computeKernelAcf(kernel)
+            for sigma in gaapConfig.sigmas:
+                aperSigma2 = sigma**2 - targetSigma**2
+                aperShape = afwGeom.Quadrupole(aperSigma2, aperSigma2, 0.0)
+                fluxErrScaling1 = algorithm._generic._getFluxErrScaling(kernelAcf, aperShape)
+                fluxErrScaling2 = self.getFluxErrScaling(kernel, aperShape)
+
+                # The PSF matching kernel is a Gaussian of sigma^2 = (f^2-1)s^2
+                # where f is the scalingFactor and s is the original seeing.
+                # The integral of ACF of the kernel times the elliptical
+                # Gaussian described by aperShape is given below.
+                analyticalValue = ((sigma**2 - (targetSigma)**2)/(sigma**2-seeing**2))**0.5
+                self.assertFloatsAlmostEqual(fluxErrScaling1, analyticalValue, rtol=1e-4)
+                self.assertFloatsAlmostEqual(fluxErrScaling1, fluxErrScaling2, rtol=1e-4)
+
     @lsst.utils.tests.methodParameters(noise=(0.001, 0.01, 0.1))
     def testMonteCarlo(self, noise, recordId=1, sigmas=[3.0, 4.0], scalingFactors=[1.1, 1.15, 1.2, 1.3, 1.4]):
         """Test GAaP flux uncertainties.
@@ -335,9 +412,8 @@ class GaapFluxTestCase(lsst.utils.tests.TestCase):
             # We compare the mean of the noisy measurements to its
             # corresponding noiseless measurement instead of the true value
             instFlux = recordNoiseless[instFluxKey]
-            # TODO: DM-27088 will set a saner bar for uncertainty estimates
-            self.assertFloatsAlmostEqual(instFluxErrMean, instFluxStdDev, rtol=0.7)
-            self.assertLess(abs(instFluxMean - instFlux), 3.0*instFluxErrMean/nSamples**0.5)
+            self.assertFloatsAlmostEqual(instFluxErrMean, instFluxStdDev, rtol=0.02)
+            self.assertLess(abs(instFluxMean - instFlux), 2.0*instFluxErrMean/nSamples**0.5)
 
 
 class TestMemory(lsst.utils.tests.MemoryTestCase):

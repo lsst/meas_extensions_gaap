@@ -34,6 +34,7 @@ from lsst.meas.base.fluxUtilities import FluxResultKey
 import lsst.pex.config as pexConfig
 from lsst.ip.diffim import ModelPsfMatchTask
 from lsst.pex.exceptions import RuntimeError as pexRuntimeError
+import scipy.signal
 
 PLUGIN_NAME = "ext_gaap_GaapFlux"
 
@@ -244,33 +245,82 @@ class BaseGaapFluxPlugin(measBase.GenericPlugin):
         # Docstring inherited.
         return cls.FLUX_ORDER
 
+    @staticmethod
+    def _computeKernelAcf(kernel: lsst.afw.math.Kernel) -> lsst.afw.image.Image:  # noqa: F821
+        """Compute the auto-correlation function of ``kernel``.
+
+        Parameters
+        ----------
+        kernel : `~lsst.afw.math.Kernel`
+            The kernel for which auto-correlation function is to be computed.
+
+        Returns
+        -------
+        acfImage : `~lsst.afw.image.Image`
+            The two-dimensional auto-correlation function of ``kernel``.
+        """
+        kernelImage = afwImage.ImageD(kernel.getDimensions())
+        kernel.computeImage(kernelImage, False)
+        acfArray = scipy.signal.correlate2d(kernelImage.array, kernelImage.array, boundary='fill')
+        acfImage = afwImage.ImageD(acfArray)
+        return acfImage
+
+    @staticmethod
+    def _getFluxErrScaling(kernelAcf: lsst.afw.image.Image,  # noqa: F821
+                           aperShape: lsst.afw.geom.Quadrupole) -> float:  # noqa: F821
+        """Calculate the value by which the standard error has to be scaled due
+        to noise correlations.
+
+        This calculates the correction to apply to the naively computed
+        `instFluxErr` to account for correlations in the pixel noise introduced
+        in the PSF-Gaussianization step.
+        This method performs the integral in Eq. A17 of Kuijken et al. (2015).
+
+        The returned value equals
+        :math:`\\int\\mathrm{d}x C^G(x) \\exp(-x^T Q^{-1}x/4)`
+        where :math: `Q` is ``aperShape`` and :math: `C^G(x)` is ``kernelAcf``.
+
+        Parameters
+        ----------
+        kernelAcf : `~lsst.afw.image.Image`
+            The auto-correlation function (ACF) of the PSF matching kernel.
+        aperShape : `~lsst.afw.geom.Quadrupole`
+            The shape parameter of the Gaussian function which was used to
+            measure GAaP flux.
+
+        Returns
+        -------
+        fluxErrScaling : `float`
+            The factor by which the standard error on GAaP flux must be scaled.
+        """
+        aperShapeX2 = afwGeom.Quadrupole(2*aperShape.getParameterVector())
+        corrFlux = measBase.SdssShapeAlgorithm.computeFixedMomentsFlux(kernelAcf, aperShapeX2,
+                                                                       kernelAcf.getBBox().getCenter())
+        fluxErrScaling = (0.5*corrFlux.instFlux)**0.5
+        return fluxErrScaling
+
     def _convolve(self, exposure: afwImage.Exposure, modelPsf: afwDetection.GaussianPsf,
-                  measRecord: lsst.afw.table.SourceRecord) -> tuple[lsst.pipe.base.Struct,  # noqa: F821
-                                                                    lsst.geom.Box2I]:  # noqa: F821
+                  measRecord: lsst.afw.table.SourceRecord) -> lsst.pipe.base.Struct:  # noqa: F821
         """Convolve the ``exposure`` to make the PSF same as ``modelPsf``.
 
         Parameters
         ----------
-        exposure : `lsst.afw.image.Exposure`
+        exposure : `~lsst.afw.image.Exposure`
             Original (full) exposure containing all the sources.
-        modelPsf : `lsst.afw.detection.GaussianPsf`
+        modelPsf : `~lsst.afw.detection.GaussianPsf`
             Target PSF to which to match.
-        measRecord : `lsst.afw.tabe.SourceRecord`
+        measRecord : `~lsst.afw.tabe.SourceRecord`
             Record for the source to be measured.
 
         Returns
         -------
-        result : `lsst.pipe.base.Struct`
+        result : `~lsst.pipe.base.Struct`
             ``result`` is the Struct returned by `modelPsfMatch` task. Notably,
             it contains a ``psfMatchedExposure``, which is the exposure
             containing the source, convolved to the target seeing and
-            ``psfMatchingKernel``, the kernel that `exposure` was convolved by
-            to obtain ``psfMatchedExposure``.
-        bbox : `lsst.geom.Box2I`
-            ``bbox`` is the bounding box of the footprint in the
-            ``psfMatchedExposure``. The exception to this is if the footprint
-            lies too close to the edge of the ``exposure`` and the bounding box
-            is slighly smaller. The flag_edge is set in such cases.
+            ``psfMatchingKernel``, the kernel that ``exposure`` was convolved
+            by to obtain ``psfMatchedExposure``. Typically, the bounding box of
+            ``psfMatchedExposure`` is larger than that of the footprint.
         """
         footprint = measRecord.getFootprint()
         bbox = footprint.getBBox()
@@ -305,15 +355,15 @@ class BaseGaapFluxPlugin(measBase.GenericPlugin):
         # more Gaussian-like
 
         # Do not let the variance plane be rescaled since we handle it
-        # carefully later in DM-27088
+        # carefully later using _getFluxScaling method
         result.psfMatchedExposure.variance.array = subExposure.variance.array
 
         # N pixels around the edges will have NO_DATA mask bit set,
         # where 2N+1 is the kernelSize. Set N number of pixels to erode without
         # reusing pixToGrow, as pixToGrow can be anything in principle.
         pixToErode = self.config.modelPsfMatch.kernel.active.kernelSize//2
-        bbox = bbox.erodedBy(pixToErode)
-        return result, bbox
+        result.psfMatchedExposure = result.psfMatchedExposure[bbox.erodedBy(pixToErode)]
+        return result
 
     def measure(self, measRecord: lsst.afw.table.SourceRecord, exposure: afwImage.Exposure,  # noqa: F821
                 center: lsst.geom.Point2D) -> None:  # noqa: F821
@@ -329,13 +379,15 @@ class BaseGaapFluxPlugin(measBase.GenericPlugin):
             stampSize = self.config.modelPsfDimension
             targetPsf = afwDetection.GaussianPsf(stampSize, stampSize, targetSigma)
             try:
-                result, bbox = self._convolve(exposure, targetPsf, measRecord)
+                result = self._convolve(exposure, targetPsf, measRecord)
 
             except Exception as error:
                 errorCollection[str(sF)] = error
                 continue
 
-            convolved = result.psfMatchedExposure[bbox]
+            convolved = result.psfMatchedExposure
+            kernelAcf = self._computeKernelAcf(result.psfMatchingKernel)
+
             for sigma in self.config.sigmas:
                 baseName = self.ConfigClass._getGaapResultName(sF, sigma, self.name)
                 if targetSigma >= sigma:
@@ -347,10 +399,16 @@ class BaseGaapFluxPlugin(measBase.GenericPlugin):
                 aperShape = afwGeom.Quadrupole(aperSigma2, aperSigma2, 0.0)
                 fluxResult = measBase.SdssShapeAlgorithm.computeFixedMomentsFlux(convolved.getMaskedImage(),
                                                                                  aperShape, center)
-                # Calculate the scale factors by which to scale the fluxes and
-                # their standard errors.
-                fluxScaling = 0.5*sigma**2/aperSigma2  # Eq. A16 of Kuijken et al. (2015)
-                fluxErrScaling = 1.0  # TODO: DM-27088 will calculate this
+                # Calculate the pre-factor in Eq. A16 of Kuijken et al. (2015)
+                # to scale the flux. Include an extra factor of 0.5 to undo
+                # the normalization factor of 2 in `computeFixedMomentsFlux`.
+                fluxScaling = 0.5*sigma**2/aperSigma2
+
+                # Calculate the integral in Eq. A17 of Kuijken et al. (2015)
+                # ``fluxErrScaling`` contains the factors not captured by
+                # ``fluxScaling`` and `instFluxErr`. It is 1 theoretically
+                # if ``kernelAcf`` is a Dirac-delta function.
+                fluxErrScaling = self._getFluxErrScaling(kernelAcf, aperShape)
 
                 # Scale the fluxResult and copy result to record
                 fluxResult.instFlux *= fluxScaling
