@@ -239,7 +239,7 @@ class BaseGaapFluxPlugin(measBase.GenericPlugin):
         flagDefs = measBase.FlagDefinitionList()
         for sF, sigma in itertools.product(self.config.scalingFactors, self.config.sigmas):
             baseName = self.ConfigClass._getGaapResultName(sF, sigma, name)
-            baseString = f"with {sigma} aperture after scaling the seeing by {sF}"
+            baseString = f"with {sigma} aperture after multiplying the seeing by {sF}"
             schema.addField(schema.join(baseName, "instFlux"), type="D",
                             doc="GAaP Flux " + baseString)
             schema.addField(schema.join(baseName, "instFluxErr"), type="D",
@@ -250,6 +250,16 @@ class BaseGaapFluxPlugin(measBase.GenericPlugin):
             flagDefs.add(schema.join(middleName, "flag_bigpsf"), ("The Gaussianized PSF is "
                                                                   "bigger than the aperture"
                                                                   ))
+        # PSF photometry
+        if self.config.doPsfPhotometry:
+            for sF in self.config.scalingFactors:
+                baseName = self.ConfigClass._getGaapResultName(sF, "PsfFlux", name)
+                baseString = f"with PSF aperture after multiplying the seeing by {sF}"
+                schema.addField(schema.join(baseName, "instFlux"), type="D",
+                                doc="GAaP PsfFlux " + baseString)
+                schema.addField(schema.join(baseName, "instFluxErr"), type="D",
+                                doc="GAaP PsfFlux error " + baseString)
+
         self.flagHandler = measBase.FlagHandler.addFields(schema, name, flagDefs)
         self.EdgeFlagKey = schema.addField(schema.join(name, "flag_edge"), type="Flag",
                                            doc="Source is too close to the edge")
