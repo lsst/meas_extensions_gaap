@@ -333,8 +333,13 @@ class GaapFluxTestCase(lsst.utils.tests.TestCase):
             A list of effective Gaussian aperture sizes.
         scalingFactors : `list` [`float`], optional
             A list of factors by which the PSF size must be scaled.
+
+        Notes
+        -----
+        This unit test tests internal states of the plugin for accuracy and is
+        specific to the implementation. It uses private variables as a result
+        and intentionally breaks encapsulation.
         """
-        # Create an image of an extended source
         gaapConfig = lsst.meas.extensions.gaap.GaapFluxConfig(sigmas=sigmas, scalingFactors=scalingFactors)
         gaapConfig.scaleByFwhm = True
 

@@ -407,7 +407,6 @@ class BaseGaapFluxPlugin(measBase.GenericPlugin):
             targetPsf = afwDetection.GaussianPsf(stampSize, stampSize, targetSigma)
             try:
                 result = self._convolve(exposure, targetPsf, measRecord)
-
             except Exception as error:
                 errorCollection[str(sF)] = error
                 continue
