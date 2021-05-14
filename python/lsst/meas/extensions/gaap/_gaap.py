@@ -34,6 +34,7 @@ from lsst.meas.base.fluxUtilities import FluxResultKey
 import lsst.pex.config as pexConfig
 from lsst.ip.diffim import ModelPsfMatchTask
 from lsst.pex.exceptions import RuntimeError as pexRuntimeError
+import scipy.signal
 
 PLUGIN_NAME = "ext_gaap_GaapFlux"
 
@@ -243,6 +244,26 @@ class BaseGaapFluxPlugin(measBase.GenericPlugin):
     def getExecutionOrder(cls) -> float:
         # Docstring inherited.
         return cls.FLUX_ORDER
+
+    @staticmethod
+    def _computeKernelAcf(kernel: lsst.afw.math.Kernel) -> lsst.afw.image.Image:  # noqa: F821
+        """Compute the auto-correlation function of ``kernel``.
+
+        Parameters
+        ----------
+        kernel : `~lsst.afw.math.Kernel`
+            The kernel for which auto-correlation function is to be computed.
+
+        Returns
+        -------
+        acfImage : `~lsst.afw.image.Image`
+            The two-dimensional auto-correlation function of ``kernel``.
+        """
+        kernelImage = afwImage.ImageD(kernel.getDimensions())
+        kernel.computeImage(kernelImage, False)
+        acfArray = scipy.signal.correlate2d(kernelImage.array, kernelImage.array, boundary='fill')
+        acfImage = afwImage.ImageD(acfArray)
+        return acfImage
 
     def _convolve(self, exposure: afwImage.Exposure, modelPsf: afwDetection.GaussianPsf,
                   measRecord: lsst.afw.table.SourceRecord) -> tuple[lsst.pipe.base.Struct,  # noqa: F821
