@@ -412,7 +412,7 @@ class BaseGaapFluxPlugin(measBase.GenericPlugin):
                 errorCollection[str(sF)] = error
                 continue
 
-            convolved = result.psfMatchedExposure
+            convolved = result.psfMatchedExposure.getMaskedImage()
             kernelAcf = self._computeKernelAcf(result.psfMatchingKernel)
 
             # Iterate over apertures
@@ -445,8 +445,7 @@ class BaseGaapFluxPlugin(measBase.GenericPlugin):
                         measRecord.set(flagKey, 1)
                         continue
 
-                fluxResult = measBase.SdssShapeAlgorithm.computeFixedMomentsFlux(convolved.getMaskedImage(),
-                                                                                 aperShape, center)
+                fluxResult = measBase.SdssShapeAlgorithm.computeFixedMomentsFlux(convolved, aperShape, center)
 
                 # Calculate the integral in Eq. A17 of Kuijken et al. (2015)
                 # ``fluxErrScaling`` contains the factors not captured by
