@@ -24,7 +24,7 @@ from __future__ import annotations
 
 __all__ = ("GaapFluxPlugin", "GaapFluxConfig", "ForcedGaapFluxPlugin", "ForcedGaapFluxConfig")
 
-from typing import Optional, Generator
+from typing import Generator, Optional, Union
 import itertools
 import lsst.afw.image as afwImage
 import lsst.afw.detection as afwDetection
@@ -33,6 +33,7 @@ import lsst.meas.base as measBase
 from lsst.meas.base.fluxUtilities import FluxResultKey
 import lsst.pex.config as pexConfig
 from lsst.ip.diffim import ModelPsfMatchTask
+from lsst.pex.exceptions import InvalidParameterError
 from lsst.pex.exceptions import RuntimeError as pexRuntimeError
 import scipy.signal
 
@@ -100,6 +101,14 @@ class BaseGaapFluxConfig(measBase.BaseMeasurementPluginConfig):
         check=_isOdd,
         doc="The dimensions (width and height) of the target PSF image in pixels. Must be odd.")
 
+    doPsfPhotometry = pexConfig.Field(
+        dtype=bool,
+        default=False,
+        doc=("Perform PSF photometry after PSF-Gaussianization to validate Gaussianization accuracy? "
+             "This does not produce consistent color estimates."
+             )
+    )
+
     # scaleByFwm is the only config field of modelPsfMatch Task that we allow
     # the user to set without explicitly setting the modelPsfMatch config.
     @property
@@ -109,6 +118,13 @@ class BaseGaapFluxConfig(measBase.BaseMeasurementPluginConfig):
     @scaleByFwhm.setter
     def scaleByFwhm(self, value) -> None:
         self.modelPsfMatch.kernel.active.scaleByFwhm = value
+
+    @property
+    def _sigmas(self) -> list:
+        """List of values set in ``sigmas`` along with special apertures such
+        as "PsfFlux" if applicable.
+        """
+        return self.sigmas.list() + ["PsfFlux"]*self.doPsfPhotometry
 
     def setDefaults(self) -> None:
         # TODO: DM-27482 might change these values.
@@ -124,7 +140,7 @@ class BaseGaapFluxConfig(measBase.BaseMeasurementPluginConfig):
         assert self.modelPsfMatch.kernel.active.alardNGauss == 1
 
     @staticmethod
-    def _getGaapResultName(sF: float, sigma: float, name: Optional[str] = None) -> str:
+    def _getGaapResultName(sF: float, sigma: Union[float, str], name: Optional[str] = None) -> str:
         """Return the base name for GAaP fields
 
         For example, for a scaling factor of 1.15 for seeing and sigma of the
@@ -144,9 +160,9 @@ class BaseGaapFluxConfig(measBase.BaseMeasurementPluginConfig):
         ----------
         sF : `float`
             The factor by which the trace radius of the PSF must be scaled.
-        sigma : `float`
+        sigma : `float` or `str`
             Sigma of the effective Gaussian aperture (PSF-convolved explicit
-            aperture).
+            aperture) or "PsfFlux" for PSF photometry post PSF-Gaussianization.
         name : `str`, optional
             The exact registered name of the GAaP plugin, typically either
             "ext_gaap_GaapFlux" or "undeblended_ext_gaap_GaapFlux". If ``name``
@@ -169,7 +185,8 @@ class BaseGaapFluxConfig(measBase.BaseMeasurementPluginConfig):
         For example, if the plugin is configured with `scalingFactors` = [1.15]
         and `sigmas` = [4.0, 5.0] the returned expression would yield
         ("ext_gaap_GaapFlux_1_15x_4_0", "ext_gaap_GaapFlux_1_15x_5_0") when
-        called with ``name`` = "ext_gaap_GaapFlux".
+        called with ``name`` = "ext_gaap_GaapFlux". It will also generate
+        "ext_gaap_GaapFlux_1_15x_PsfFlux" if `doPsfPhotometry` is True.
 
         Parameters
         ----------
@@ -185,7 +202,7 @@ class BaseGaapFluxConfig(measBase.BaseMeasurementPluginConfig):
             A generator expression yielding all the base names.
         """
         scalingFactors = self.scalingFactors
-        sigmas = self.sigmas
+        sigmas = self._sigmas
         baseNames = (self._getGaapResultName(sF, sigma, name)
                      for sF, sigma in itertools.product(scalingFactors, sigmas))
         return baseNames
@@ -223,7 +240,7 @@ class BaseGaapFluxPlugin(measBase.GenericPlugin):
         flagDefs = measBase.FlagDefinitionList()
         for sF, sigma in itertools.product(self.config.scalingFactors, self.config.sigmas):
             baseName = self.ConfigClass._getGaapResultName(sF, sigma, name)
-            baseString = f"with {sigma} aperture after scaling the seeing by {sF}"
+            baseString = f"with {sigma} aperture after multiplying the seeing by {sF}"
             schema.addField(schema.join(baseName, "instFlux"), type="D",
                             doc="GAaP Flux " + baseString)
             schema.addField(schema.join(baseName, "instFluxErr"), type="D",
@@ -234,6 +251,16 @@ class BaseGaapFluxPlugin(measBase.GenericPlugin):
             flagDefs.add(schema.join(middleName, "flag_bigpsf"), ("The Gaussianized PSF is "
                                                                   "bigger than the aperture"
                                                                   ))
+        # PSF photometry
+        if self.config.doPsfPhotometry:
+            for sF in self.config.scalingFactors:
+                baseName = self.ConfigClass._getGaapResultName(sF, "PsfFlux", name)
+                baseString = f"with PSF aperture after multiplying the seeing by {sF}"
+                schema.addField(schema.join(baseName, "instFlux"), type="D",
+                                doc="GAaP PsfFlux " + baseString)
+                schema.addField(schema.join(baseName, "instFluxErr"), type="D",
+                                doc="GAaP PsfFlux error " + baseString)
+
         self.flagHandler = measBase.FlagHandler.addFields(schema, name, flagDefs)
         self.EdgeFlagKey = schema.addField(schema.join(name, "flag_edge"), type="Flag",
                                            doc="Source is too close to the edge")
@@ -385,24 +412,40 @@ class BaseGaapFluxPlugin(measBase.GenericPlugin):
                 errorCollection[str(sF)] = error
                 continue
 
-            convolved = result.psfMatchedExposure
+            convolved = result.psfMatchedExposure.getMaskedImage()
             kernelAcf = self._computeKernelAcf(result.psfMatchingKernel)
 
-            for sigma in self.config.sigmas:
+            # Iterate over apertures
+            for sigma in self.config._sigmas:
                 baseName = self.ConfigClass._getGaapResultName(sF, sigma, self.name)
-                if targetSigma >= sigma:
-                    flagKey = measRecord.schema.join(baseName, "flag_bigpsf")
-                    measRecord.set(flagKey, 1)
-                    continue
+                # Calculate the aperture shape and thepre-factor in
+                # Eq. A16 of Kuijken et al. (2015) to scale the flux.
+                # Include an extra factor of 0.5 to undo the normalization
+                # factor of 2 in `computeFixedMomentsFlux`.
+                if sigma == "PsfFlux":
+                    # PSF photometry case
+                    aperSigma2 = targetSigma**2
+                    aperShape = afwGeom.Quadrupole(aperSigma2, aperSigma2, 0.0)
+                    fluxScaling = 1.0  # Eq. A16 of Kuijken et al. (2015)
+                else:
+                    try:
+                        if sigma == "Optimal":  # Hook for DM-29290
+                            # Optimal elliptical aperture case
+                            # TODO: DM-29290
+                            # Set `normalize` to True to check if aperShape is valid.
+                            continue
+                        else:
+                            aperSigma2 = sigma**2 - targetSigma**2
+                            aperShape = afwGeom.Quadrupole(aperSigma2, aperSigma2, 0.0,
+                                                           normalize=True)
+                            fluxScaling = 0.5*sigma**2/aperSigma2
+                    except (InvalidParameterError, ZeroDivisionError):
+                        # Raised when the aperture is invalid
+                        flagKey = measRecord.schema.join(baseName, "flag_bigpsf")
+                        measRecord.set(flagKey, 1)
+                        continue
 
-                aperSigma2 = sigma**2 - targetSigma**2
-                aperShape = afwGeom.Quadrupole(aperSigma2, aperSigma2, 0.0)
-                fluxResult = measBase.SdssShapeAlgorithm.computeFixedMomentsFlux(convolved.getMaskedImage(),
-                                                                                 aperShape, center)
-                # Calculate the pre-factor in Eq. A16 of Kuijken et al. (2015)
-                # to scale the flux. Include an extra factor of 0.5 to undo
-                # the normalization factor of 2 in `computeFixedMomentsFlux`.
-                fluxScaling = 0.5*sigma**2/aperSigma2
+                fluxResult = measBase.SdssShapeAlgorithm.computeFixedMomentsFlux(convolved, aperShape, center)
 
                 # Calculate the integral in Eq. A17 of Kuijken et al. (2015)
                 # ``fluxErrScaling`` contains the factors not captured by

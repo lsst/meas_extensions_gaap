@@ -145,6 +145,7 @@ class GaapFluxTestCase(lsst.utils.tests.TestCase):
         algConfig = measConfig.plugins[algName]
         algConfig.scalingFactors = scalingFactors
         algConfig.scaleByFwhm = True
+        algConfig.doPsfPhotometry = True
 
         if forced:
             offset = geom.Extent2D(-12.3, 45.6)
@@ -206,7 +207,8 @@ class GaapFluxTestCase(lsst.utils.tests.TestCase):
         # For sF > 1, check that the measured value is close to the true value
         for baseName in algConfig.getAllGaapResultNames(algName):
             if "_1_0x_" not in baseName:
-                self.assertFloatsAlmostEqual(source.get(baseName + "_instFlux"), flux, rtol=0.1)
+                rtol = 0.1 if "PsfFlux" not in baseName else 0.2
+                self.assertFloatsAlmostEqual(source.get(baseName + "_instFlux"), flux, rtol=rtol)
 
     def runGaap(self, forced, psfSigma, scalingFactors=(1.0, 1.05, 1.1, 1.15, 1.2, 1.5, 2.0)):
         self.check(psfSigma=psfSigma, forced=forced, scalingFactors=scalingFactors)
