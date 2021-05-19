@@ -268,6 +268,7 @@ class BaseGaapFluxPlugin(measBase.GenericPlugin):
         self.flagHandler = measBase.FlagHandler.addFields(schema, name, flagDefs)
         self.EdgeFlagKey = schema.addField(schema.join(name, "flag_edge"), type="Flag",
                                            doc="Source is too close to the edge")
+        self._failKey = schema.addField(name + '_flag', type="Flag", doc="Set for any fatal failure")
 
         self.psfMatchTask = self.config._modelPsfMatch.target(config=self.config._modelPsfMatch)
 
@@ -559,6 +560,22 @@ class BaseGaapFluxPlugin(measBase.GenericPlugin):
                 self._setFlag(measRecord, baseName)
 
         return allFailure
+
+    def fail(self, measRecord, error=None):
+        """Record a measurement failure.
+
+        This default implementation simply records the failure in the source
+        record and is inherited by the SingleFrameGaapFluxPlugin and
+        ForcedGaapFluxPlugin.
+
+        Parameters
+        ----------
+        measRecord : `lsst.afw.table.SourceRecord`
+            Catalog record for the source being measured.
+        error : `Exception`
+            Error causing failure, or `None`.
+        """
+        measRecord.set(self._failKey, True)
 
 
 GaapFluxConfig = BaseGaapFluxConfig
