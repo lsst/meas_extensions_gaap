@@ -248,11 +248,8 @@ class BaseGaapFluxPlugin(measBase.GenericPlugin):
         flagDefs = measBase.FlagDefinitionList()
         for scalingFactor, sigma in itertools.product(self.config.scalingFactors, self.config.sigmas):
             baseName = self.ConfigClass._getGaapResultName(scalingFactor, sigma, name)
-            baseString = f"with {sigma} aperture after multiplying the seeing by {scalingFactor}"
-            schema.addField(schema.join(baseName, "instFlux"), type="D",
-                            doc="GAaP Flux " + baseString)
-            schema.addField(schema.join(baseName, "instFluxErr"), type="D",
-                            doc="GAaP Flux error " + baseString)
+            doc = f"GAaP Flux with {sigma} aperture after multiplying the seeing by {scalingFactor}"
+            FluxResultKey.addFields(schema, name=baseName, doc=doc)
 
             # Remove the prefix_ since FlagHandler prepends it
             middleName = self.ConfigClass._getGaapResultName(scalingFactor, sigma)
@@ -263,11 +260,8 @@ class BaseGaapFluxPlugin(measBase.GenericPlugin):
         if self.config.doPsfPhotometry:
             for scalingFactor in self.config.scalingFactors:
                 baseName = self.ConfigClass._getGaapResultName(scalingFactor, "PsfFlux", name)
-                baseString = f"with PSF aperture after multiplying the seeing by {scalingFactor}"
-                schema.addField(schema.join(baseName, "instFlux"), type="D",
-                                doc="GAaP PsfFlux " + baseString)
-                schema.addField(schema.join(baseName, "instFluxErr"), type="D",
-                                doc="GAaP PsfFlux error " + baseString)
+                doc = f"GAaP Flux with PSF aperture after multiplying the seeing by {scalingFactor}"
+                FluxResultKey.addFields(schema, name=baseName, doc=doc)
 
         self.flagHandler = measBase.FlagHandler.addFields(schema, name, flagDefs)
         self.EdgeFlagKey = schema.addField(schema.join(name, "flag_edge"), type="Flag",
