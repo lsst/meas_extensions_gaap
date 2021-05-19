@@ -475,6 +475,25 @@ class BaseGaapFluxPlugin(measBase.GenericPlugin):
         if errorCollection:
             raise GaapConvolutionError(errorCollection)
 
+    @staticmethod
+    def _setFlag(measRecord, baseName, flagName="bigpsf"):
+        """Set the GAaP flag determined by ``baseName`` and ``flagName``.
+
+        A convenience method to set {baseName}_flag_{flagName} to True.
+        To set the general flag indicating measurement failure, use _failKey
+        directly.
+
+        Parameters
+        ----------
+        measRecord : `~lsst.afw.table.SourceRecord`
+            Record describing the source being measured.
+        baseName : `str`
+            The base name of the GAaP field for which the flag must be set.
+        flagName : `str`
+            The name of the GAaP flag to be set.
+        """
+        flagKey = measRecord.schema.join(baseName, f"flag_{flagName}")
+        measRecord.set(flagKey, True)
 
 GaapFluxConfig = BaseGaapFluxConfig
 GaapFluxPlugin = BaseGaapFluxPlugin.makeSingleFramePlugin(PLUGIN_NAME)
