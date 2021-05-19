@@ -135,12 +135,14 @@ class BaseGaapFluxConfig(measBase.BaseMeasurementPluginConfig):
         return self.sigmas.list() + ["PsfFlux"]*self.doPsfPhotometry
 
     def setDefaults(self) -> None:
+        # Docstring inherited
         # TODO: DM-27482 might change these values.
         self._modelPsfMatch.kernel.active.alardNGauss = 1
         self._modelPsfMatch.kernel.active.alardDegGaussDeconv = 1
         self._modelPsfMatch.kernel.active.alardDegGauss = [8]
         self._modelPsfMatch.kernel.active.alardGaussBeta = 1.0
         self._modelPsfMatch.kernel.active.spatialKernelOrder = 0
+        self.scaleByFwhm = True
 
     def validate(self):
         super().validate()
