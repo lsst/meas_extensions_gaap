@@ -80,7 +80,8 @@ class BaseGaapFluxConfig(measBase.BaseMeasurementPluginConfig):
         default=[4.0, 5.0],
         doc="List of sigmas (in pixels) of circular Gaussian apertures to apply on "
             "pre-seeing galaxy images. These should be somewhat larger than the PSF "
-            "(determined by ``scalingFactors``) to avoid measurement failures.")
+            "(determined by ``scalingFactors``) to avoid measurement failures."
+    )
 
     scalingFactors = pexConfig.ListField(
         dtype=float,
@@ -90,24 +91,26 @@ class BaseGaapFluxConfig(measBase.BaseMeasurementPluginConfig):
             "sigma values of the target Gaussian PSF. The factor should not be less "
             "than unity to avoid the PSF matching task to go into deconvolution mode "
             "and should ideally be slightly greater than unity. The runtime of the "
-            "plugin scales linearly with the number of elements in the list.")
+            "plugin scales linearly with the number of elements in the list."
+    )
 
     _modelPsfMatch = pexConfig.ConfigurableField(
         target=ModelPsfMatchTask,
-        doc="PSF Gaussianization Task")
+        doc="PSF Gaussianization Task"
+    )
 
     _modelPsfDimension = pexConfig.Field(
         dtype=int,
         default=65,
         check=_isOdd,
-        doc="The dimensions (width and height) of the target PSF image in pixels. Must be odd.")
+        doc="The dimensions (width and height) of the target PSF image in pixels. Must be odd."
+    )
 
     doPsfPhotometry = pexConfig.Field(
         dtype=bool,
         default=False,
-        doc=("Perform PSF photometry after PSF-Gaussianization to validate Gaussianization accuracy? "
-             "This does not produce consistent color estimates."
-             )
+        doc="Perform PSF photometry after PSF-Gaussianization to validate Gaussianization accuracy? "
+            "This does not produce consistent color estimates."
     )
 
     # scaleByFwm is the only config field of modelPsfMatch Task that we allow
@@ -253,9 +256,9 @@ class BaseGaapFluxPlugin(measBase.GenericPlugin):
 
             # Remove the prefix_ since FlagHandler prepends it
             middleName = self.ConfigClass._getGaapResultName(scalingFactor, sigma)
-            flagDefs.add(schema.join(middleName, "flag_bigpsf"), ("The Gaussianized PSF is "
-                                                                  "bigger than the aperture"
-                                                                  ))
+            flagDefs.add(schema.join(middleName, "flag_bigpsf"), "The Gaussianized PSF is "
+                                                                 "bigger than the aperture")
+
         # PSF photometry
         if self.config.doPsfPhotometry:
             for scalingFactor in self.config.scalingFactors:
