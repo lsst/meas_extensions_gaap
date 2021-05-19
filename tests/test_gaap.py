@@ -353,7 +353,7 @@ class GaapFluxTestCase(lsst.utils.tests.TestCase):
             modelPsf = afwDetection.GaussianPsf(algorithm.config._modelPsfDimension,
                                                 algorithm.config._modelPsfDimension,
                                                 targetSigma)
-            result = algorithm._generic._convolve(exposure, modelPsf, record)
+            result = algorithm._generic._gaussianize(exposure, modelPsf, record)
             kernel = result.psfMatchingKernel
             kernelAcf = algorithm._generic._computeKernelAcf(kernel)
             for sigma in gaapConfig.sigmas:

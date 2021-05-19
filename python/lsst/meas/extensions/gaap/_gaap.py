@@ -334,9 +334,12 @@ class BaseGaapFluxPlugin(measBase.GenericPlugin):
         fluxErrScaling = (0.5*corrFlux.instFlux)**0.5
         return fluxErrScaling
 
-    def _convolve(self, exposure: afwImage.Exposure, modelPsf: afwDetection.GaussianPsf,
-                  measRecord: lsst.afw.table.SourceRecord) -> lsst.pipe.base.Struct:  # noqa: F821
-        """Convolve the ``exposure`` to make the PSF same as ``modelPsf``.
+    def _gaussianize(self, exposure: afwImage.Exposure, modelPsf: afwDetection.GaussianPsf,
+                     measRecord: lsst.afw.table.SourceRecord) -> lsst.pipe.base.Struct:  # noqa: F821
+        """Modify the ``exposure`` so that its PSF is a Gaussian.
+
+        Compute the convolution kernel to make the PSF same as ``modelPsf``
+        and return the Gaussianized exposure in a struct.
 
         Parameters
         ----------
@@ -356,6 +359,11 @@ class BaseGaapFluxPlugin(measBase.GenericPlugin):
             ``psfMatchingKernel``, the kernel that ``exposure`` was convolved
             by to obtain ``psfMatchedExposure``. Typically, the bounding box of
             ``psfMatchedExposure`` is larger than that of the footprint.
+
+        Notes
+        -----
+        During normal mode of operation, ``modelPsf`` is intended to be of the
+        type `~lsst.afw.detection.GaussianPsf`, this is not enforced.
         """
         footprint = measRecord.getFootprint()
         bbox = footprint.getBBox()
@@ -414,7 +422,7 @@ class BaseGaapFluxPlugin(measBase.GenericPlugin):
             stampSize = self.config._modelPsfDimension
             targetPsf = afwDetection.GaussianPsf(stampSize, stampSize, targetSigma)
             try:
-                result = self._convolve(exposure, targetPsf, measRecord)
+                result = self._gaussianize(exposure, targetPsf, measRecord)
             except Exception as error:
                 errorCollection[str(scalingFactor)] = error
                 continue
