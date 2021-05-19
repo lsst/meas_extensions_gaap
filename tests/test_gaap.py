@@ -24,8 +24,8 @@ import math
 import unittest
 import galsim
 import itertools
-import lsst.afw.display as afwDisplay
 import lsst.afw.detection as afwDetection
+import lsst.afw.display as afwDisplay
 import lsst.afw.geom as afwGeom
 import lsst.afw.image as afwImage
 import lsst.afw.table as afwTable
@@ -120,8 +120,10 @@ class GaapFluxTestCase(lsst.utils.tests.TestCase):
     def makeAlgorithm(self, gaapConfig=None):
         schema = lsst.meas.base.tests.TestDataset.makeMinimalSchema()
         if gaapConfig is None:
-            gaapConfig = lsst.meas.extensions.gaap.GaapFluxConfig()
-        gaapPlugin = lsst.meas.extensions.gaap.GaapFluxPlugin(gaapConfig, 'ext_gaap_GaapFlux', schema, None)
+            gaapConfig = lsst.meas.extensions.gaap.SingleFrameGaapFluxConfig()
+        gaapPlugin = lsst.meas.extensions.gaap.SingleFrameGaapFluxPlugin(gaapConfig,
+                                                                         'ext_gaap_GaapFlux',
+                                                                         schema, None)
         return gaapPlugin, schema
 
     def check(self, psfSigma=0.5, flux=1000., scalingFactors=[1.15], forced=False):
@@ -238,9 +240,11 @@ class GaapFluxTestCase(lsst.utils.tests.TestCase):
         Parameters
         ----------
         sigmas : `list` [`float`], optional
-            The list of sigmas (in pixels) to construct the `GaapFluxConfig`.
+            The list of sigmas (in pixels) to construct the
+            `SingleFrameGaapFluxConfig`.
         scalingFactors : `list` [`float`], optional
-            The list of scaling factors to construct the `GaapFluxConfig`.
+            The list of scaling factors to construct the
+            `SingleFrameGaapFluxConfig`.
 
         Raises
         -----
@@ -254,7 +258,8 @@ class GaapFluxTestCase(lsst.utils.tests.TestCase):
         ``scalingFactors`` to avoid the InvalidParameterError exception being
         raised.
         """
-        gaapConfig = lsst.meas.extensions.gaap.GaapFluxConfig(sigmas=sigmas, scalingFactors=scalingFactors)
+        gaapConfig = lsst.meas.extensions.gaap.SingleFrameGaapFluxConfig(sigmas=sigmas,
+                                                                         scalingFactors=scalingFactors)
         gaapConfig.scaleByFwhm = True
 
         # Make an instance of GAaP algorithm from a config
@@ -340,7 +345,8 @@ class GaapFluxTestCase(lsst.utils.tests.TestCase):
         specific to the implementation. It uses private variables as a result
         and intentionally breaks encapsulation.
         """
-        gaapConfig = lsst.meas.extensions.gaap.GaapFluxConfig(sigmas=sigmas, scalingFactors=scalingFactors)
+        gaapConfig = lsst.meas.extensions.gaap.SingleFrameGaapFluxConfig(sigmas=sigmas,
+                                                                         scalingFactors=scalingFactors)
         gaapConfig.scaleByFwhm = True
 
         algorithm, schema = self.makeAlgorithm(gaapConfig)
@@ -353,13 +359,13 @@ class GaapFluxTestCase(lsst.utils.tests.TestCase):
             modelPsf = afwDetection.GaussianPsf(algorithm.config._modelPsfDimension,
                                                 algorithm.config._modelPsfDimension,
                                                 targetSigma)
-            result = algorithm._generic._gaussianize(exposure, modelPsf, record)
+            result = algorithm._gaussianize(exposure, modelPsf, record)
             kernel = result.psfMatchingKernel
-            kernelAcf = algorithm._generic._computeKernelAcf(kernel)
+            kernelAcf = algorithm._computeKernelAcf(kernel)
             for sigma in gaapConfig.sigmas:
                 aperSigma2 = sigma**2 - targetSigma**2
                 aperShape = afwGeom.Quadrupole(aperSigma2, aperSigma2, 0.0)
-                fluxErrScaling1 = algorithm._generic._getFluxErrScaling(kernelAcf, aperShape)
+                fluxErrScaling1 = algorithm._getFluxErrScaling(kernelAcf, aperShape)
                 fluxErrScaling2 = self.getFluxErrScaling(kernel, aperShape)
 
                 # The PSF matching kernel is a Gaussian of sigma^2 = (f^2-1)s^2
@@ -389,7 +395,8 @@ class GaapFluxTestCase(lsst.utils.tests.TestCase):
         scalingFactors : `list` [`float`], optional
             The list of scaling factors to construct the `GaapFluxConfig`.
         """
-        gaapConfig = lsst.meas.extensions.gaap.GaapFluxConfig(sigmas=sigmas, scalingFactors=scalingFactors)
+        gaapConfig = lsst.meas.extensions.gaap.SingleFrameGaapFluxConfig(sigmas=sigmas,
+                                                                         scalingFactors=scalingFactors)
         gaapConfig.scaleByFwhm = True
 
         algorithm, schema = self.makeAlgorithm(gaapConfig)

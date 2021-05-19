@@ -22,14 +22,16 @@
 
 from __future__ import annotations
 
-__all__ = ("GaapFluxPlugin", "GaapFluxConfig", "ForcedGaapFluxPlugin", "ForcedGaapFluxConfig")
+__all__ = ("SingleFrameGaapFluxPlugin", "SingleFrameGaapFluxConfig",
+           "ForcedGaapFluxPlugin", "ForcedGaapFluxConfig")
 
 from typing import Generator, Optional, Union
 from functools import partial
 import itertools
-import lsst.afw.image as afwImage
 import lsst.afw.detection as afwDetection
+import lsst.afw.image as afwImage
 import lsst.afw.geom as afwGeom
+import lsst.geom
 import lsst.meas.base as measBase
 from lsst.meas.base.fluxUtilities import FluxResultKey
 import lsst.pex.config as pexConfig
@@ -218,8 +220,15 @@ class BaseGaapFluxConfig(measBase.BaseMeasurementPluginConfig):
         return baseNames
 
 
-class BaseGaapFluxPlugin(measBase.GenericPlugin):
-    """Gaussian-Aperture and PSF flux (GAaP) base plugin
+class BaseGaapFluxMixin:
+    """Mixin base class for Gaussian-Aperture and PSF (GAaP) photometry
+    algorithm.
+
+    This class does almost all the heavy-lifting for its two derived classes,
+    SingleFrameGaapFluxPlugin and ForcedGaapFluxPlugin which simply adapt it to
+    the slightly different interfaces for single-frame and forced measurement.
+    This class implements the GAaP algorithm and is intended for code reuse
+    by the two concrete derived classes by including this mixin class.
 
     Parameters
     ----------
@@ -230,8 +239,6 @@ class BaseGaapFluxPlugin(measBase.GenericPlugin):
     schema : `lsst.afw.table.Schema`
         The schema for the measurement output catalog. New fields will be added
         to hold measurements produced by this plugin.
-    metadata : `lsst.daf.base.PropertySet`
-        Plugin metadata that will be attached to the output catalog.
 
     Raises
     ------
@@ -243,12 +250,10 @@ class BaseGaapFluxPlugin(measBase.GenericPlugin):
 
     ConfigClass = BaseGaapFluxConfig
 
-    def __init__(self, config, name, schema, metadata) -> None:
-        super().__init__(config, name, schema, metadata)
-
+    def __init__(self, config: BaseGaapFluxConfig, name, schema, logName=None) -> None:
         # Flag definitions for each variant of GAaP measurement
         flagDefs = measBase.FlagDefinitionList()
-        for scalingFactor, sigma in itertools.product(self.config.scalingFactors, self.config.sigmas):
+        for scalingFactor, sigma in itertools.product(config.scalingFactors, config.sigmas):
             baseName = self.ConfigClass._getGaapResultName(scalingFactor, sigma, name)
             doc = f"GAaP Flux with {sigma} aperture after multiplying the seeing by {scalingFactor}"
             FluxResultKey.addFields(schema, name=baseName, doc=doc)
@@ -259,8 +264,8 @@ class BaseGaapFluxPlugin(measBase.GenericPlugin):
                                                                  "bigger than the aperture")
 
         # PSF photometry
-        if self.config.doPsfPhotometry:
-            for scalingFactor in self.config.scalingFactors:
+        if config.doPsfPhotometry:
+            for scalingFactor in config.scalingFactors:
                 baseName = self.ConfigClass._getGaapResultName(scalingFactor, "PsfFlux", name)
                 doc = f"GAaP Flux with PSF aperture after multiplying the seeing by {scalingFactor}"
                 FluxResultKey.addFields(schema, name=baseName, doc=doc)
@@ -270,12 +275,7 @@ class BaseGaapFluxPlugin(measBase.GenericPlugin):
                                            doc="Source is too close to the edge")
         self._failKey = schema.addField(name + '_flag', type="Flag", doc="Set for any fatal failure")
 
-        self.psfMatchTask = self.config._modelPsfMatch.target(config=self.config._modelPsfMatch)
-
-    @classmethod
-    def getExecutionOrder(cls) -> float:
-        # Docstring inherited.
-        return cls.FLUX_ORDER
+        self.psfMatchTask = config._modelPsfMatch.target(config=config._modelPsfMatch)
 
     @staticmethod
     def _computeKernelAcf(kernel: lsst.afw.math.Kernel) -> lsst.afw.image.Image:  # noqa: F821
@@ -449,9 +449,38 @@ class BaseGaapFluxPlugin(measBase.GenericPlugin):
         fluxResultKey = FluxResultKey(measRecord.schema[baseName])
         fluxResultKey.set(measRecord, fluxResult)
 
-    def measure(self, measRecord: lsst.afw.table.SourceRecord, exposure: afwImage.Exposure,  # noqa: F821
-                center: lsst.geom.Point2D) -> None:  # noqa: F821
-        # Docstring inherited.
+    def _gaussianizeAndMeasure(self, measRecord: lsst.afw.table.SourceRecord,
+                               exposure: afwImage.Exposure,
+                               center: lsst.geom.Point2D) -> None:
+        """Measure the properties of a source on a single image.
+
+        The image may be from a single epoch, or it may be a coadd.
+
+        Parameters
+        ----------
+        measRecord : `~lsst.afw.table.SourceRecord`
+            Record describing the object being measured. Previously-measured
+            quantities may be retrieved from here, and it will be updated
+            in-place with the outputs of this plugin.
+        exposure : `~lsst.afw.image.ExposureF`
+            The pixel data to be measured, together with the associated PSF,
+            WCS, etc. All other sources in the image should have been replaced
+            by noise according to deblender outputs.
+        center : `~lsst.geom.Point2D`
+            Centroid location of the source being measured.
+
+        Raises
+        ------
+        GaapConvolutionError
+            Raised if the PSF Gaussianization fails for any of the target PSFs.
+        lsst.meas.base.FatalAlgorithmError
+            Raised if the Exposure does not contain a PSF model.
+
+        Notes
+        -----
+        This method is the entry point to the mixin from the concrete derived
+        classes.
+        """
         psf = exposure.getPsf()
         if psf is None:
             raise measBase.FatalAlgorithmError("No PSF in exposure")
@@ -578,12 +607,91 @@ class BaseGaapFluxPlugin(measBase.GenericPlugin):
         measRecord.set(self._failKey, True)
 
 
-GaapFluxConfig = BaseGaapFluxConfig
-GaapFluxPlugin = BaseGaapFluxPlugin.makeSingleFramePlugin(PLUGIN_NAME)
-"""Single-frame version of `GaapFluxPlugin`.
-"""
+class SingleFrameGaapFluxConfig(BaseGaapFluxConfig,
+                                measBase.SingleFramePluginConfig):
+    """Config for SingleFrameGaapFluxPlugin."""
 
-ForcedGaapFluxConfig = BaseGaapFluxConfig
-ForcedGaapFluxPlugin = BaseGaapFluxPlugin.makeForcedPlugin(PLUGIN_NAME)
-"""Forced version of `GaapFluxPlugin`.
-"""
+
+@measBase.register(PLUGIN_NAME)
+class SingleFrameGaapFluxPlugin(BaseGaapFluxMixin, measBase.SingleFramePlugin):
+    """Gaussian Aperture and PSF photometry algorithm in single-frame mode.
+
+    Parameters
+    ----------
+    config : `GaapFluxConfig`
+        Plugin configuration.
+    name : `str`
+        Plugin name, for registering.
+    schema : `lsst.afw.table.Schema`
+        The schema for the measurement output catalog. New fields will be added
+        to hold measurements produced by this plugin.
+    metadata : `lsst.daf.base.PropertySet`
+        Plugin metadata that will be attached to the output catalog.
+    logName : `str`, optional
+        Name to use when logging errors.
+
+    Notes
+    -----
+    This plugin must be run in forced mode to produce consistent colors across
+    the different bandpasses.
+    """
+    ConfigClass = SingleFrameGaapFluxConfig
+
+    def __init__(self, config, name, schema, metadata, logName=None):
+        BaseGaapFluxMixin.__init__(self, config, name, schema, logName=logName)
+        measBase.SingleFramePlugin.__init__(self, config, name, schema, metadata, logName=logName)
+
+    @classmethod
+    def getExecutionOrder(cls) -> float:
+        # Docstring inherited
+        return cls.FLUX_ORDER
+
+    def measure(self, measRecord, exposure):
+        # Docstring inherited.
+        center = measRecord.getCentroid()
+        self._gaussianizeAndMeasure(measRecord, exposure, center)
+
+
+class ForcedGaapFluxConfig(BaseGaapFluxConfig, measBase.ForcedPluginConfig):
+    """Config for ForcedGaapFluxPlugin."""
+
+
+@measBase.register(PLUGIN_NAME)
+class ForcedGaapFluxPlugin(BaseGaapFluxMixin, measBase.ForcedPlugin):
+    """Gaussian Aperture and PSF (GAaP) photometry plugin in forced mode.
+
+    This is the GAaP plugin to run for consistent colors across the bandpasses.
+
+    Parameters
+    ----------
+    config : `GaapFluxConfig`
+        Plugin configuration.
+    name : `str`
+        Plugin name, for registering.
+    schemaMapper : `lsst.afw.table.SchemaMapper`
+        A mapping from reference catalog fields to output catalog fields.
+        Output fields will be added to the output schema.
+        for the measurement output catalog. New fields will be added
+        to hold measurements produced by this plugin.
+    metadata : `lsst.daf.base.PropertySet`
+        Plugin metadata that will be attached to the output catalog.
+    logName : `str`, optional
+        Name to use when logging errors.
+    """
+    ConfigClass = ForcedGaapFluxConfig
+
+    def __init__(self, config, name, schemaMapper, metadata, logName=None):
+        schema = schemaMapper.editOutputSchema()
+        BaseGaapFluxMixin.__init__(self, config, name, schema, logName=logName)
+        measBase.ForcedPlugin.__init__(self, config, name, schemaMapper, metadata, logName=logName)
+
+    @classmethod
+    def getExecutionOrder(cls) -> float:
+        # Docstring inherited.
+        return cls.FLUX_ORDER
+
+    def measure(self, measRecord, exposure, refRecord, refWcs):
+        # Docstring inherited.
+        wcs = exposure.getWcs()
+        center = wcs.skyToPixel(refWcs.pixelToSky(refRecord.getCentroid()))
+        self._gaussianizeAndMeasure(measRecord, exposure, center)
