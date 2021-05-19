@@ -328,7 +328,7 @@ class BaseGaapFluxPlugin(measBase.GenericPlugin):
         fluxErrScaling : `float`
             The factor by which the standard error on GAaP flux must be scaled.
         """
-        aperShapeX2 = afwGeom.Quadrupole(2*aperShape.getParameterVector())
+        aperShapeX2 = aperShape.convolve(aperShape)
         corrFlux = measBase.SdssShapeAlgorithm.computeFixedMomentsFlux(kernelAcf, aperShapeX2,
                                                                        kernelAcf.getBBox().getCenter())
         fluxErrScaling = (0.5*corrFlux.instFlux)**0.5
