@@ -25,6 +25,7 @@ from __future__ import annotations
 __all__ = ("GaapFluxPlugin", "GaapFluxConfig", "ForcedGaapFluxPlugin", "ForcedGaapFluxConfig")
 
 from typing import Generator, Optional, Union
+from functools import partial
 import itertools
 import lsst.afw.image as afwImage
 import lsst.afw.detection as afwDetection
@@ -33,7 +34,6 @@ import lsst.meas.base as measBase
 from lsst.meas.base.fluxUtilities import FluxResultKey
 import lsst.pex.config as pexConfig
 from lsst.ip.diffim import ModelPsfMatchTask
-from lsst.pex.exceptions import InvalidParameterError
 from lsst.pex.exceptions import RuntimeError as pexRuntimeError
 import scipy.signal
 
@@ -404,6 +404,50 @@ class BaseGaapFluxPlugin(measBase.GenericPlugin):
         result.psfMatchedExposure = result.psfMatchedExposure[bbox.erodedBy(pixToErode)]
         return result
 
+    def _measureFlux(self, measRecord: lsst.afw.table.SourceRecord,
+                     exposure: afwImage.Exposure, kernelAcf: afwImage.Image,
+                     center: lsst.geom.Point2D, aperShape: afwGeom.Quadrupole,
+                     baseName: str, fluxScaling: float) -> None:
+        """Measure the flux and populate the record.
+
+        Parameters
+        ----------
+        measRecord : `~lsst.afw.table.SourceRecord`
+            Catalog record for the source being measured.
+        exposure : `~lsst.afw.image.Exposure`
+            Subexposure containing the deblended source being measured.
+            The PSF attached to it should nominally be an
+            `lsst.afw.Detection.GaussianPsf` object, but not enforced.
+        kernelAcf : `~lsst.afw.image.Image`
+            An image representating the auto-correlation function of the
+            PSF-matching kernel.
+        center : `~lsst.geom.Point2D`
+            The centroid position of the source being measured.
+        aperShape : `~lsst.afw.geom.Quadrupole`
+            The shape parameter of the post-seeing Gaussian aperture.
+            It should be a valid quadrupole if ``fluxScaling`` is specified.
+        baseName : `str`
+            The base name of the GAaP field.
+        fluxScaling : `float`, optional
+            The multiplication factor by which the measured flux has to be
+            scaled. If `None` or unspecified, the pre-factor in Eq. A16
+            of Kuijken et al. (2015) is computed and applied.
+        """
+        # Calculate the integral in Eq. A17 of Kuijken et al. (2015)
+        # ``fluxErrScaling`` contains the factors not captured by
+        # ``fluxScaling`` and `instFluxErr`. It is 1 theoretically
+        # if ``kernelAcf`` is a Dirac-delta function.
+        fluxErrScaling = self._getFluxErrScaling(kernelAcf, aperShape)
+
+        fluxResult = measBase.SdssShapeAlgorithm.computeFixedMomentsFlux(exposure.getMaskedImage(),
+                                                                         aperShape, center)
+
+        # Scale the quantities in fluxResult and copy result to record
+        fluxResult.instFlux *= fluxScaling
+        fluxResult.instFluxErr *= fluxScaling*fluxErrScaling
+        fluxResultKey = FluxResultKey(measRecord.schema[baseName])
+        fluxResultKey.set(measRecord, fluxResult)
+
     def measure(self, measRecord: lsst.afw.table.SourceRecord, exposure: afwImage.Exposure,  # noqa: F821
                 center: lsst.geom.Point2D) -> None:  # noqa: F821
         # Docstring inherited.
@@ -428,52 +472,28 @@ class BaseGaapFluxPlugin(measBase.GenericPlugin):
                 errorCollection[str(scalingFactor)] = error
                 continue
 
-            convolved = result.psfMatchedExposure.getMaskedImage()
+            convolved = result.psfMatchedExposure
             kernelAcf = self._computeKernelAcf(result.psfMatchingKernel)
 
-            # Iterate over apertures
-            for sigma in self.config._sigmas:
+            measureFlux = partial(self._measureFlux, measRecord, convolved, kernelAcf, center)
+
+            if self.config.doPsfPhotometry:
+                baseName = self.ConfigClass._getGaapResultName(scalingFactor, "PsfFlux", self.name)
+                aperShape = targetPsf.computeShape()
+                measureFlux(aperShape, baseName, fluxScaling=1)
+
+            # Iterate over pre-defined circular apertures
+            for sigma in self.config.sigmas:
                 baseName = self.ConfigClass._getGaapResultName(scalingFactor, sigma, self.name)
-                # Calculate the aperture shape and thepre-factor in
-                # Eq. A16 of Kuijken et al. (2015) to scale the flux.
-                # Include an extra factor of 0.5 to undo the normalization
-                # factor of 2 in `computeFixedMomentsFlux`.
-                if sigma == "PsfFlux":
-                    # PSF photometry case
-                    aperSigma2 = targetSigma**2
-                    aperShape = afwGeom.Quadrupole(aperSigma2, aperSigma2, 0.0)
-                    fluxScaling = 1.0  # Eq. A16 of Kuijken et al. (2015)
-                else:
-                    try:
-                        if sigma == "Optimal":  # Hook for DM-29290
-                            # Optimal elliptical aperture case
-                            # TODO: DM-29290
-                            # Set `normalize` to True to check if aperShape is valid.
-                            continue
-                        else:
-                            aperSigma2 = sigma**2 - targetSigma**2
-                            aperShape = afwGeom.Quadrupole(aperSigma2, aperSigma2, 0.0,
-                                                           normalize=True)
-                            fluxScaling = 0.5*sigma**2/aperSigma2
-                    except (InvalidParameterError, ZeroDivisionError):
-                        # Raised when the aperture is invalid
-                        flagKey = measRecord.schema.join(baseName, "flag_bigpsf")
-                        measRecord.set(flagKey, 1)
-                        continue
+                if sigma <= targetSigma:
+                    # Raise when the aperture is invalid
+                    self._setFlag(measRecord, baseName)
+                    continue
 
-                fluxResult = measBase.SdssShapeAlgorithm.computeFixedMomentsFlux(convolved, aperShape, center)
-
-                # Calculate the integral in Eq. A17 of Kuijken et al. (2015)
-                # ``fluxErrScaling`` contains the factors not captured by
-                # ``fluxScaling`` and `instFluxErr`. It is 1 theoretically
-                # if ``kernelAcf`` is a Dirac-delta function.
-                fluxErrScaling = self._getFluxErrScaling(kernelAcf, aperShape)
-
-                # Scale the fluxResult and copy result to record
-                fluxResult.instFlux *= fluxScaling
-                fluxResult.instFluxErr *= fluxScaling*fluxErrScaling
-                fluxResultKey = FluxResultKey(measRecord.schema[baseName])
-                fluxResultKey.set(measRecord, fluxResult)
+                aperSigma2 = sigma**2 - targetSigma**2
+                aperShape = afwGeom.Quadrupole(aperSigma2, aperSigma2, 0.0)
+                fluxScaling = 0.5*sigma**2/aperSigma2
+                measureFlux(aperShape, baseName, fluxScaling)
 
         # Raise GaapConvolutionError before exiting the plugin
         # if the collection of errors is not empty
