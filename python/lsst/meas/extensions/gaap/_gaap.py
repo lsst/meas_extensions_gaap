@@ -415,6 +415,11 @@ class BaseGaapFluxPlugin(measBase.GenericPlugin):
         errorCollection = dict()
         for scalingFactor in self.config.scalingFactors:
             targetSigma = scalingFactor*seeing
+            # If this target PSF is bound to fail for all apertures,
+            # set the flags and move on without PSF Gaussianization.
+            if self._isAllFailure(measRecord, scalingFactor, targetSigma):
+                continue
+
             stampSize = self.config._modelPsfDimension
             targetPsf = afwDetection.GaussianPsf(stampSize, stampSize, targetSigma)
             try:
@@ -494,6 +499,47 @@ class BaseGaapFluxPlugin(measBase.GenericPlugin):
         """
         flagKey = measRecord.schema.join(baseName, f"flag_{flagName}")
         measRecord.set(flagKey, True)
+
+    def _isAllFailure(self, measRecord, scalingFactor, targetSigma) -> bool:
+        """Check if all measurements would result in failure.
+
+        If all of the pre-seeing apertures are smaller than size of the
+        target PSF for the given ``scalingFactor``, then set the
+        `flag_bigpsf` for all fields corresponding to ``scalingFactor``
+        and move on instead of spending computational effort in
+        Gaussianizing the exposure.
+
+        Parameters
+        ----------
+        measRecord : `~lsst.afw.table.SourceRecord`
+            Record describing the source being measured.
+        scalingFactor : `float`
+            The multiplicative factor by which the seeing is scaled.
+        targetSigma : `float`
+            Sigma of the target circular Gaussian PSF.
+
+        Returns
+        -------
+        allFailure : `bool`
+            A boolean value indicating whether all measurements would fail.
+
+        Notes
+        ----
+        If doPsfPhotometry is set to True, then this will always return False.
+        """
+        if self.config.doPsfPhotometry:
+            return False
+
+        allFailure = targetSigma >= max(self.config.sigmas)
+
+        # Set all failure flags if allFailure is True.
+        if allFailure:
+            for sigma in self.config.sigmas:
+                baseName = self.ConfigClass._getGaapResultNames(scalingFactor, sigma, self.name)
+                self._setFlag(measRecord, baseName)
+
+        return allFailure
+
 
 GaapFluxConfig = BaseGaapFluxConfig
 GaapFluxPlugin = BaseGaapFluxPlugin.makeSingleFramePlugin(PLUGIN_NAME)
