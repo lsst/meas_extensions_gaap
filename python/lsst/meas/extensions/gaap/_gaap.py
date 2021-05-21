@@ -638,9 +638,19 @@ class BaseGaapFluxMixin:
             return False
 
         allFailure = targetSigma >= max(self.config.sigmas)
+        # If measurements would fail on all circular apertures, and if
+        # optimal elliptical aperture is used, check if that would also fail.
+        if self.config.doOptimalPhotometry and allFailure:
+            optimalShape = measRecord.get(self.optimalShapeKey)
+            aperShape = afwGeom.Quadrupole(optimalShape.getParameterVector()
+                                           - [targetSigma**2, targetSigma**2, 0.0])
+            allFailure = (aperShape.getIxx() <= 0) or (aperShape.getIyy() <= 0) or (aperShape.getArea() <= 0)
 
         # Set all failure flags if allFailure is True.
         if allFailure:
+            if self.config.doOptimalPhotometry:
+                baseName = self.ConfigClass._getGaapResultName(scalingFactor, "Optimal", self.name)
+                self._setFlag(measRecord, baseName, "bigPsf")
             for sigma in self.config.sigmas:
                 baseName = self.ConfigClass._getGaapResultName(scalingFactor, sigma, self.name)
                 self._setFlag(measRecord, baseName, "bigPsf")
