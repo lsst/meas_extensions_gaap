@@ -31,6 +31,7 @@ import itertools
 import lsst.afw.detection as afwDetection
 import lsst.afw.image as afwImage
 import lsst.afw.geom as afwGeom
+import lsst.afw.table as afwTable
 import lsst.geom
 import lsst.meas.base as measBase
 from lsst.meas.base.fluxUtilities import FluxResultKey
@@ -115,6 +116,13 @@ class BaseGaapFluxConfig(measBase.BaseMeasurementPluginConfig):
             "This does not produce consistent color estimates."
     )
 
+    doOptimalPhotometry = pexConfig.Field(
+        dtype=bool,
+        default=False,  # Temporarily disabled until measurement is implemented.
+        doc="Perform optimal photometry with near maximal SNR using an adaptive elliptical aperture? "
+            "This requires a shape algorithm to have been run previously."
+    )
+
     registerForApCorr = pexConfig.Field(
         dtype=bool,
         default=True,
@@ -142,9 +150,9 @@ class BaseGaapFluxConfig(measBase.BaseMeasurementPluginConfig):
     @property
     def _sigmas(self) -> list:
         """List of values set in ``sigmas`` along with special apertures such
-        as "PsfFlux" if applicable.
+        as "PsfFlux" and "Optimal" if applicable.
         """
-        return self.sigmas.list() + ["PsfFlux"]*self.doPsfPhotometry
+        return self.sigmas.list() + ["PsfFlux"]*self.doPsfPhotometry + ["Optimal"]*self.doOptimalPhotometry
 
     def setDefaults(self) -> None:
         # Docstring inherited
@@ -286,6 +294,25 @@ class BaseGaapFluxMixin:
                 middleName = self.ConfigClass._getGaapResultName(scalingFactor, "PsfFlux")
                 flagDefs.add(schema.join(middleName, "flag"), "Generic failure flag for this set of config "
                                                               "parameters. ")
+
+        if config.doOptimalPhotometry:
+            # Add fields to hold the optimal aperture shape
+            # OptimalPhotometry case will fetch the aperture shape from here.
+            self.optimalShapeKey = afwTable.QuadrupoleKey.addFields(schema, schema.join(name, "OptimalShape"),
+                                                                    doc="Pre-seeing aperture used for "
+                                                                        "optimal GAaP photometry")
+            for scalingFactor in config.scalingFactors:
+                baseName = self.ConfigClass._getGaapResultName(scalingFactor, "Optimal", name)
+                docstring = f"GAaP Flux with optimal aperture after multiplying the seeing by {scalingFactor}"
+                FluxResultKey.addFields(schema, name=baseName, doc=docstring)
+
+                # Remove the prefix_ since FlagHandler prepends it
+                middleName = self.ConfigClass._getGaapResultName(scalingFactor, "Optimal")
+                flagDefs.add(schema.join(middleName, "flag_bigPsf"), "The Gaussianized PSF is "
+                                                                     "bigger than the aperture")
+                flagDefs.add(schema.join(middleName, "flag"), "Generic failure flag for this set of config "
+                                                              "parameters. ")
+
         if config.registerForApCorr:
             for baseName in config.getAllGaapResultNames(name):
                 measBase.addApCorrName(baseName)
