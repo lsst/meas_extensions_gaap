@@ -37,6 +37,7 @@ import lsst.meas.base as measBase
 from lsst.meas.base.fluxUtilities import FluxResultKey
 import lsst.pex.config as pexConfig
 from lsst.ip.diffim import ModelPsfMatchTask
+from lsst.pex.exceptions import InvalidParameterError
 import scipy.signal
 
 PLUGIN_NAME = "ext_gaap_GaapFlux"
@@ -459,7 +460,7 @@ class BaseGaapFluxMixin:
     def _measureFlux(self, measRecord: lsst.afw.table.SourceRecord,
                      exposure: afwImage.Exposure, kernelAcf: afwImage.Image,
                      center: lsst.geom.Point2D, aperShape: afwGeom.Quadrupole,
-                     baseName: str, fluxScaling: float) -> None:
+                     baseName: str, fluxScaling: Optional[float] = None) -> None:
         """Measure the flux and populate the record.
 
         Parameters
@@ -485,6 +486,20 @@ class BaseGaapFluxMixin:
             scaled. If `None` or unspecified, the pre-factor in Eq. A16
             of Kuijken et al. (2015) is computed and applied.
         """
+        if fluxScaling is None:
+            # Calculate the pre-factor in Eq. A16 of Kuijken et al. (2015)
+            # to scale the flux. Include an extra factor of 0.5 to undo
+            # the normalization factor of 2 in `computeFixedMomentsFlux`.
+            try:
+                aperShape.normalize()
+                # Calculate the pre-seeing aperture.
+                # This should nominally be the same as optimalShape.
+                preseeingShape = aperShape.convolve(exposure.getPsf().computeShape())
+                fluxScaling = 0.5*preseeingShape.getArea()/aperShape.getArea()
+            except (InvalidParameterError, ZeroDivisionError):
+                self._setFlag(measRecord, baseName, "bigPsf")
+                return
+
         # Calculate the integral in Eq. A17 of Kuijken et al. (2015)
         # ``fluxErrScaling`` contains the factors not captured by
         # ``fluxScaling`` and `instFluxErr`. It is 1 theoretically
@@ -562,6 +577,13 @@ class BaseGaapFluxMixin:
                 baseName = self.ConfigClass._getGaapResultName(scalingFactor, "PsfFlux", self.name)
                 aperShape = targetPsf.computeShape()
                 measureFlux(aperShape, baseName, fluxScaling=1)
+
+            if self.config.doOptimalPhotometry:
+                baseName = self.ConfigClass._getGaapResultName(scalingFactor, "Optimal", self.name)
+                optimalShape = measRecord.get(self.optimalShapeKey)
+                aperShape = afwGeom.Quadrupole(optimalShape.getParameterVector()
+                                               - targetPsf.computeShape().getParameterVector())
+                measureFlux(aperShape, baseName)
 
             # Iterate over pre-defined circular apertures
             for sigma in self.config.sigmas:

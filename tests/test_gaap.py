@@ -151,6 +151,8 @@ class GaapFluxTestCase(lsst.meas.base.tests.AlgorithmTestCase, lsst.utils.tests.
         algConfig.scalingFactors = scalingFactors
         algConfig.scaleByFwhm = True
         algConfig.doPsfPhotometry = True
+        # Do not turn on optimal photometry; not robust for a point-source.
+        algConfig.doOptimalPhotometry = False
 
         if forced:
             offset = geom.Extent2D(-12.3, 45.6)
