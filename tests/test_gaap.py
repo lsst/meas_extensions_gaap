@@ -313,12 +313,17 @@ class GaapFluxTestCase(lsst.meas.base.tests.AlgorithmTestCase, lsst.utils.tests.
         gaapConfig = lsst.meas.extensions.gaap.SingleFrameGaapFluxConfig(sigmas=sigmas,
                                                                          scalingFactors=scalingFactors)
         gaapConfig.scaleByFwhm = True
+        gaapConfig.doOptimalPhotometry = True
 
         # Make an instance of GAaP algorithm from a config
         algName = "ext_gaap_GaapFlux"
         algorithm, schema = self.makeAlgorithm(gaapConfig)
         # Make a noiseless exposure and measurements for reference
         exposure, catalog = self.dataset.realize(0.0, schema)
+        # Record the PSF shapes if optimal photometry is performed.
+        if gaapConfig.doOptimalPhotometry:
+            self.recordPsfShape(catalog)
+
         record = catalog[0]
         algorithm.measure(record, exposure)
         seeing = exposure.getPsf().getSigma()
@@ -342,6 +347,19 @@ class GaapFluxTestCase(lsst.meas.base.tests.AlgorithmTestCase, lsst.utils.tests.
             else:
                 self.assertFalse(record[baseName+"_flag_bigPsf"])
                 self.assertFalse(record[baseName+"_flag"])
+
+        # Ensure that flag_bigPsf is set if OptimalShape is not large enough.
+        if gaapConfig.doOptimalPhotometry:
+            aperShape = afwTable.QuadrupoleKey(schema[schema.join(algName, "OptimalShape")]).get(record)
+            for scalingFactor in gaapConfig.scalingFactors:
+                targetSigma = scalingFactor*seeing
+                baseName = gaapConfig._getGaapResultName(scalingFactor, "Optimal", algName)
+                try:
+                    afwGeom.Quadrupole(aperShape.getParameterVector()-[targetSigma**2, targetSigma**2, 0.0],
+                                       normalize=True)
+                    self.assertFalse(record[baseName + "_flag_bigPsf"])
+                except InvalidParameterError:
+                    self.assertTrue(record[baseName + "_flag_bigPsf"])
 
         # Ensure that the edge flag is set for the source at the corner.
         record = catalog[2]
