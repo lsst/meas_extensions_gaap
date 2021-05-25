@@ -405,7 +405,10 @@ class GaapFluxTestCase(lsst.meas.base.tests.AlgorithmTestCase, lsst.utils.tests.
         kernel.computeImage(kim, False)
         weight = galsim.Image(np.zeros_like(kim.array))
         aperSigma = aperShape.getDeterminantRadius()
-        gauss = galsim.Gaussian(sigma=aperSigma, flux=2*np.pi*aperSigma**2)
+        trace = aperShape.getIxx() + aperShape.getIyy()
+        distortion = galsim.Shear(e1=(aperShape.getIxx()-aperShape.getIyy())/trace,
+                                  e2=2*aperShape.getIxy()/trace)
+        gauss = galsim.Gaussian(sigma=aperSigma, flux=2*np.pi*aperSigma**2).shear(distortion)
         weight = gauss.drawImage(image=weight, scale=1.0, method='no_pixel')
         kwarr = scipy.signal.convolve2d(weight.array, kim.array, boundary='fill')
         fluxErrScaling = np.sqrt(np.sum(kwarr*kwarr))
@@ -464,6 +467,13 @@ class GaapFluxTestCase(lsst.meas.base.tests.AlgorithmTestCase, lsst.utils.tests.
                 analyticalValue = ((sigma**2 - (targetSigma)**2)/(sigma**2-seeing**2))**0.5
                 self.assertFloatsAlmostEqual(fluxErrScaling1, analyticalValue, rtol=1e-4)
                 self.assertFloatsAlmostEqual(fluxErrScaling1, fluxErrScaling2, rtol=1e-4)
+
+            # Try with an elliptical aperture. This is a proxy for
+            # optimal aperture, since we do not actually measure anything.
+            aperShape = afwGeom.Quadrupole(8, 6, 3)
+            fluxErrScaling1 = algorithm._getFluxErrScaling(kernelAcf, aperShape)
+            fluxErrScaling2 = self.getFluxErrScaling(kernel, aperShape)
+            self.assertFloatsAlmostEqual(fluxErrScaling1, fluxErrScaling2, rtol=1e-4)
 
     @lsst.utils.tests.methodParameters(noise=(0.001, 0.01, 0.1))
     def testMonteCarlo(self, noise, recordId=1, sigmas=[3.0, 4.0], scalingFactors=[1.1, 1.15, 1.2, 1.3, 1.4]):
