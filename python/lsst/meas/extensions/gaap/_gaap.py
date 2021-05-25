@@ -715,6 +715,15 @@ class SingleFrameGaapFluxPlugin(BaseGaapFluxMixin, measBase.SingleFramePlugin):
     def measure(self, measRecord, exposure):
         # Docstring inherited.
         center = measRecord.getCentroid()
+        if self.config.doOptimalPhotometry:
+            # The adaptive shape is set to post-seeing aperture.
+            # Convolve with the PSF shape to obtain pre-seeing aperture.
+            # Refer to pg. 30-31 of Kuijken et al. (2015) for this heuristic.
+            # psfShape = measRecord.getPsfShape()  # TODO: DM-30229
+            psfShape = afwTable.QuadrupoleKey(measRecord.schema["slot_PsfShape"]).get(measRecord)
+            optimalShape = measRecord.getShape().convolve(psfShape)
+            # Record the aperture used for optimal photometry
+            measRecord.set(self.optimalShapeKey, optimalShape)
         self._gaussianizeAndMeasure(measRecord, exposure, center)
 
 
@@ -760,4 +769,18 @@ class ForcedGaapFluxPlugin(BaseGaapFluxMixin, measBase.ForcedPlugin):
         # Docstring inherited.
         wcs = exposure.getWcs()
         center = wcs.skyToPixel(refWcs.pixelToSky(refRecord.getCentroid()))
+        if self.config.doOptimalPhotometry:
+            # The adaptive shape is set to post-seeing aperture.
+            # Convolve it with the PSF shape to obtain pre-seeing aperture.
+            # Refer to pg. 30-31 of Kuijken et al. (2015) for this heuristic.
+            # psfShape = refRecord.getPsfShape()  # TODO: DM-30229
+            psfShape = afwTable.QuadrupoleKey(refRecord.schema["slot_PsfShape"]).get(refRecord)
+            optimalShape = refRecord.getShape().convolve(psfShape)
+            if not (wcs == refWcs):
+                measFromSky = wcs.linearizeSkyToPixel(measRecord.getCentroid(), lsst.geom.radians)
+                skyFromRef = refWcs.linearizePixelToSky(refRecord.getCentroid(), lsst.geom.radians)
+                measFromRef = measFromSky*skyFromRef
+                optimalShape.transformInPlace(measFromRef.getLinear())
+            # Record the intrinsic aperture used for optimal photometry.
+            measRecord.set(self.optimalShapeKey, optimalShape)
         self._gaussianizeAndMeasure(measRecord, exposure, center)
