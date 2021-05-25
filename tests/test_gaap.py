@@ -384,6 +384,22 @@ class GaapFluxTestCase(lsst.meas.base.tests.AlgorithmTestCase, lsst.utils.tests.
         for record in catalog:
             record.set(psfShapeKey, self.dataset.psfShape)
 
+    @staticmethod
+    def invertQuadrupole(shape: afwGeom.Quadrupole) -> afwGeom.Quadrupole:
+        """Compute the Quadrupole object corresponding to the inverse matrix.
+
+        If M = [[Q.getIxx(), Q.getIxy()],
+                [Q.getIxy(), Q.getIyy()]]
+
+        for the input quadrupole Q, the returned quadrupole R corresponds to
+
+        M^{-1} = [[R.getIxx(), R.getIxy()],
+                  [R.getIxy(), R.getIyy()]].
+        """
+        invShape = afwGeom.Quadrupole(shape.getIyy(), shape.getIxx(), -shape.getIxy())
+        invShape.scale(1./shape.getDeterminantRadius()**2)
+        return invShape
+
     def getFluxErrScaling(self, kernel, aperShape):
         """Returns the value by which the standard error has to be scaled due
         to noise correlations.
