@@ -468,10 +468,14 @@ class GaapFluxTestCase(lsst.meas.base.tests.AlgorithmTestCase, lsst.utils.tests.
         gaapConfig = lsst.meas.extensions.gaap.SingleFrameGaapFluxConfig(sigmas=sigmas,
                                                                          scalingFactors=scalingFactors)
         gaapConfig.scaleByFwhm = True
+        gaapConfig.doPsfPhotometry = True
+        gaapConfig.doOptimalPhotometry = True
 
         algorithm, schema = self.makeAlgorithm(gaapConfig)
         # Make a noiseless exposure and keep measurement record for reference
         exposure, catalog = self.dataset.realize(0.0, schema)
+        if gaapConfig.doOptimalPhotometry:
+            self.recordPsfShape(catalog)
         recordNoiseless = catalog[recordId]
         totalFlux = recordNoiseless["truth_instFlux"]
         algorithm.measure(recordNoiseless, exposure)
@@ -480,6 +484,8 @@ class GaapFluxTestCase(lsst.meas.base.tests.AlgorithmTestCase, lsst.utils.tests.
         catalog = afwTable.SourceCatalog(schema)
         for repeat in range(nSamples):
             exposure, cat = self.dataset.realize(noise*totalFlux, schema, randomSeed=repeat)
+            if gaapConfig.doOptimalPhotometry:
+                self.recordPsfShape(cat)
             record = cat[recordId]
             algorithm.measure(record, exposure)
             catalog.append(record)
