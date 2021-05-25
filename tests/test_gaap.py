@@ -279,7 +279,7 @@ class GaapFluxTestCase(lsst.meas.base.tests.AlgorithmTestCase, lsst.utils.tests.
         with self.assertRaises(lsst.meas.base.FatalAlgorithmError):
             sfmTask.run(catalog, exposure)
 
-    def testFlags(self, sigmas=[2.5, 3.0, 4.0], scalingFactors=[1.15, 1.25, 1.4]):
+    def testFlags(self, sigmas=[2.5, 3.0, 4.0], scalingFactors=[1.15, 1.25, 1.4, 100.]):
         """Test that GAaP flags are set properly.
 
         Specifically, we test that
