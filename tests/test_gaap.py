@@ -346,6 +346,23 @@ class GaapFluxTestCase(lsst.meas.base.tests.AlgorithmTestCase, lsst.utils.tests.
         self.assertTrue(record[algName + "_flag_edge"])
         self.assertFalse(record[algName + "_flag"])
 
+    def recordPsfShape(self, catalog) -> None:
+        """Record PSF shapes under the appropriate fields in ``catalog``.
+
+        This method must be called after the dataset is realized and a catalog
+        is returned by the `realize` method. It assumes that the schema is
+        non-minimal and has "psfShape_xx", "psfShape_yy" and "psfShape_xy"
+        fields setup
+
+        Parameters
+        ----------
+        catalog : `~lsst.afw.table.SourceCatalog`
+            A source catalog containing records of the simulated sources.
+        """
+        psfShapeKey = afwTable.QuadrupoleKey(catalog.schema["slot_PsfShape"])
+        for record in catalog:
+            record.set(psfShapeKey, self.dataset.psfShape)
+
     def getFluxErrScaling(self, kernel, aperShape):
         """Returns the value by which the standard error has to be scaled due
         to noise correlations.
