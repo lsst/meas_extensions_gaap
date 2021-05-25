@@ -124,6 +124,9 @@ class GaapFluxTestCase(lsst.meas.base.tests.AlgorithmTestCase, lsst.utils.tests.
         gaapPlugin = lsst.meas.extensions.gaap.SingleFrameGaapFluxPlugin(gaapConfig,
                                                                          'ext_gaap_GaapFlux',
                                                                          schema, None)
+        if gaapConfig.doOptimalPhotometry:
+            afwTable.QuadrupoleKey.addFields(schema, "psfShape", "PSF shape")
+            schema.getAliasMap().set("slot_PsfShape", "psfShape")
         return gaapPlugin, schema
 
     def check(self, psfSigma=0.5, flux=1000., scalingFactors=[1.15], forced=False):
