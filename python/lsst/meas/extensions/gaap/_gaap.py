@@ -22,18 +22,20 @@
 
 from __future__ import annotations
 
-__all__ = ("GaapFluxPlugin", "GaapFluxConfig", "ForcedGaapFluxPlugin", "ForcedGaapFluxConfig")
+__all__ = ("SingleFrameGaapFluxPlugin", "SingleFrameGaapFluxConfig",
+           "ForcedGaapFluxPlugin", "ForcedGaapFluxConfig")
 
 from typing import Generator, Optional, Union
+from functools import partial
 import itertools
-import lsst.afw.image as afwImage
 import lsst.afw.detection as afwDetection
+import lsst.afw.image as afwImage
 import lsst.afw.geom as afwGeom
+import lsst.geom
 import lsst.meas.base as measBase
 from lsst.meas.base.fluxUtilities import FluxResultKey
 import lsst.pex.config as pexConfig
 from lsst.ip.diffim import ModelPsfMatchTask
-from lsst.pex.exceptions import InvalidParameterError
 from lsst.pex.exceptions import RuntimeError as pexRuntimeError
 import scipy.signal
 
@@ -80,7 +82,8 @@ class BaseGaapFluxConfig(measBase.BaseMeasurementPluginConfig):
         default=[4.0, 5.0],
         doc="List of sigmas (in pixels) of circular Gaussian apertures to apply on "
             "pre-seeing galaxy images. These should be somewhat larger than the PSF "
-            "(determined by ``scalingFactors``) to avoid measurement failures.")
+            "(determined by ``scalingFactors``) to avoid measurement failures."
+    )
 
     scalingFactors = pexConfig.ListField(
         dtype=float,
@@ -89,35 +92,42 @@ class BaseGaapFluxConfig(measBase.BaseMeasurementPluginConfig):
         doc="List of factors with which the seeing should be scaled to obtain the "
             "sigma values of the target Gaussian PSF. The factor should not be less "
             "than unity to avoid the PSF matching task to go into deconvolution mode "
-            "and should ideally be slightly greater than unity.")
+            "and should ideally be slightly greater than unity. The runtime of the "
+            "plugin scales linearly with the number of elements in the list."
+    )
 
-    modelPsfMatch = pexConfig.ConfigurableField(
+    _modelPsfMatch = pexConfig.ConfigurableField(
         target=ModelPsfMatchTask,
-        doc="PSF Gaussianization Task")
+        doc="PSF Gaussianization Task"
+    )
 
-    modelPsfDimension = pexConfig.Field(
+    _modelPsfDimension = pexConfig.Field(
         dtype=int,
         default=65,
         check=_isOdd,
-        doc="The dimensions (width and height) of the target PSF image in pixels. Must be odd.")
+        doc="The dimensions (width and height) of the target PSF image in pixels. Must be odd."
+    )
 
     doPsfPhotometry = pexConfig.Field(
         dtype=bool,
         default=False,
-        doc=("Perform PSF photometry after PSF-Gaussianization to validate Gaussianization accuracy? "
-             "This does not produce consistent color estimates."
-             )
+        doc="Perform PSF photometry after PSF-Gaussianization to validate Gaussianization accuracy? "
+            "This does not produce consistent color estimates."
     )
 
     # scaleByFwm is the only config field of modelPsfMatch Task that we allow
     # the user to set without explicitly setting the modelPsfMatch config.
+    # It is intended to abstract away the underlying implementation.
     @property
     def scaleByFwhm(self) -> bool:
-        return self.modelPsfMatch.kernel.active.scaleByFwhm
+        """Config parameter of the PSF Matching task.
+        Scale kernelSize, alardGaussians by input Fwhm?
+        """
+        return self._modelPsfMatch.kernel.active.scaleByFwhm
 
     @scaleByFwhm.setter
-    def scaleByFwhm(self, value) -> None:
-        self.modelPsfMatch.kernel.active.scaleByFwhm = value
+    def scaleByFwhm(self, value: bool) -> None:
+        self._modelPsfMatch.kernel.active.scaleByFwhm = value
 
     @property
     def _sigmas(self) -> list:
@@ -127,20 +137,22 @@ class BaseGaapFluxConfig(measBase.BaseMeasurementPluginConfig):
         return self.sigmas.list() + ["PsfFlux"]*self.doPsfPhotometry
 
     def setDefaults(self) -> None:
+        # Docstring inherited
         # TODO: DM-27482 might change these values.
-        self.modelPsfMatch.kernel.active.alardNGauss = 1
-        self.modelPsfMatch.kernel.active.alardDegGaussDeconv = 1
-        self.modelPsfMatch.kernel.active.alardDegGauss = [8]
-        self.modelPsfMatch.kernel.active.alardGaussBeta = 1.0
-        self.modelPsfMatch.kernel.active.spatialKernelOrder = 0
+        self._modelPsfMatch.kernel.active.alardNGauss = 1
+        self._modelPsfMatch.kernel.active.alardDegGaussDeconv = 1
+        self._modelPsfMatch.kernel.active.alardDegGauss = [8]
+        self._modelPsfMatch.kernel.active.alardGaussBeta = 1.0
+        self._modelPsfMatch.kernel.active.spatialKernelOrder = 0
+        self.scaleByFwhm = True
 
     def validate(self):
         super().validate()
-        self.modelPsfMatch.validate()
-        assert self.modelPsfMatch.kernel.active.alardNGauss == 1
+        self._modelPsfMatch.validate()
+        assert self._modelPsfMatch.kernel.active.alardNGauss == 1
 
     @staticmethod
-    def _getGaapResultName(sF: float, sigma: Union[float, str], name: Optional[str] = None) -> str:
+    def _getGaapResultName(scalingFactor: float, sigma: Union[float, str], name: Optional[str] = None) -> str:
         """Return the base name for GAaP fields
 
         For example, for a scaling factor of 1.15 for seeing and sigma of the
@@ -158,7 +170,7 @@ class BaseGaapFluxConfig(measBase.BaseMeasurementPluginConfig):
 
         Parameters
         ----------
-        sF : `float`
+        scalingFactor : `float`
             The factor by which the trace radius of the PSF must be scaled.
         sigma : `float` or `str`
             Sigma of the effective Gaussian aperture (PSF-convolved explicit
@@ -174,7 +186,7 @@ class BaseGaapFluxConfig(measBase.BaseMeasurementPluginConfig):
         baseName : `str`
             Base name for GAaP field.
         """
-        suffix = "_".join((str(sF).replace(".", "_")+"x", str(sigma).replace(".", "_")))
+        suffix = "_".join((str(scalingFactor).replace(".", "_")+"x", str(sigma).replace(".", "_")))
         if name is None:
             return suffix
         return "_".join((name, suffix))
@@ -203,13 +215,20 @@ class BaseGaapFluxConfig(measBase.BaseMeasurementPluginConfig):
         """
         scalingFactors = self.scalingFactors
         sigmas = self._sigmas
-        baseNames = (self._getGaapResultName(sF, sigma, name)
-                     for sF, sigma in itertools.product(scalingFactors, sigmas))
+        baseNames = (self._getGaapResultName(scalingFactor, sigma, name)
+                     for scalingFactor, sigma in itertools.product(scalingFactors, sigmas))
         return baseNames
 
 
-class BaseGaapFluxPlugin(measBase.GenericPlugin):
-    """Gaussian-Aperture and PSF flux (GAaP) base plugin
+class BaseGaapFluxMixin:
+    """Mixin base class for Gaussian-Aperture and PSF (GAaP) photometry
+    algorithm.
+
+    This class does almost all the heavy-lifting for its two derived classes,
+    SingleFrameGaapFluxPlugin and ForcedGaapFluxPlugin which simply adapt it to
+    the slightly different interfaces for single-frame and forced measurement.
+    This class implements the GAaP algorithm and is intended for code reuse
+    by the two concrete derived classes by including this mixin class.
 
     Parameters
     ----------
@@ -220,8 +239,6 @@ class BaseGaapFluxPlugin(measBase.GenericPlugin):
     schema : `lsst.afw.table.Schema`
         The schema for the measurement output catalog. New fields will be added
         to hold measurements produced by this plugin.
-    metadata : `lsst.daf.base.PropertySet`
-        Plugin metadata that will be attached to the output catalog.
 
     Raises
     ------
@@ -233,44 +250,32 @@ class BaseGaapFluxPlugin(measBase.GenericPlugin):
 
     ConfigClass = BaseGaapFluxConfig
 
-    def __init__(self, config, name, schema, metadata) -> None:
-        super().__init__(config, name, schema, metadata)
-
+    def __init__(self, config: BaseGaapFluxConfig, name, schema, logName=None) -> None:
         # Flag definitions for each variant of GAaP measurement
         flagDefs = measBase.FlagDefinitionList()
-        for sF, sigma in itertools.product(self.config.scalingFactors, self.config.sigmas):
-            baseName = self.ConfigClass._getGaapResultName(sF, sigma, name)
-            baseString = f"with {sigma} aperture after multiplying the seeing by {sF}"
-            schema.addField(schema.join(baseName, "instFlux"), type="D",
-                            doc="GAaP Flux " + baseString)
-            schema.addField(schema.join(baseName, "instFluxErr"), type="D",
-                            doc="GAaP Flux error " + baseString)
+        for scalingFactor, sigma in itertools.product(config.scalingFactors, config.sigmas):
+            baseName = self.ConfigClass._getGaapResultName(scalingFactor, sigma, name)
+            doc = f"GAaP Flux with {sigma} aperture after multiplying the seeing by {scalingFactor}"
+            FluxResultKey.addFields(schema, name=baseName, doc=doc)
 
             # Remove the prefix_ since FlagHandler prepends it
-            middleName = self.ConfigClass._getGaapResultName(sF, sigma)
-            flagDefs.add(schema.join(middleName, "flag_bigpsf"), ("The Gaussianized PSF is "
-                                                                  "bigger than the aperture"
-                                                                  ))
+            middleName = self.ConfigClass._getGaapResultName(scalingFactor, sigma)
+            flagDefs.add(schema.join(middleName, "flag_bigpsf"), "The Gaussianized PSF is "
+                                                                 "bigger than the aperture")
+
         # PSF photometry
-        if self.config.doPsfPhotometry:
-            for sF in self.config.scalingFactors:
-                baseName = self.ConfigClass._getGaapResultName(sF, "PsfFlux", name)
-                baseString = f"with PSF aperture after multiplying the seeing by {sF}"
-                schema.addField(schema.join(baseName, "instFlux"), type="D",
-                                doc="GAaP PsfFlux " + baseString)
-                schema.addField(schema.join(baseName, "instFluxErr"), type="D",
-                                doc="GAaP PsfFlux error " + baseString)
+        if config.doPsfPhotometry:
+            for scalingFactor in config.scalingFactors:
+                baseName = self.ConfigClass._getGaapResultName(scalingFactor, "PsfFlux", name)
+                doc = f"GAaP Flux with PSF aperture after multiplying the seeing by {scalingFactor}"
+                FluxResultKey.addFields(schema, name=baseName, doc=doc)
 
         self.flagHandler = measBase.FlagHandler.addFields(schema, name, flagDefs)
         self.EdgeFlagKey = schema.addField(schema.join(name, "flag_edge"), type="Flag",
                                            doc="Source is too close to the edge")
+        self._failKey = schema.addField(name + '_flag', type="Flag", doc="Set for any fatal failure")
 
-        self.psfMatchTask = self.config.modelPsfMatch.target(config=self.config.modelPsfMatch)
-
-    @classmethod
-    def getExecutionOrder(cls) -> float:
-        # Docstring inherited.
-        return cls.FLUX_ORDER
+        self.psfMatchTask = config._modelPsfMatch.target(config=config._modelPsfMatch)
 
     @staticmethod
     def _computeKernelAcf(kernel: lsst.afw.math.Kernel) -> lsst.afw.image.Image:  # noqa: F821
@@ -320,15 +325,18 @@ class BaseGaapFluxPlugin(measBase.GenericPlugin):
         fluxErrScaling : `float`
             The factor by which the standard error on GAaP flux must be scaled.
         """
-        aperShapeX2 = afwGeom.Quadrupole(2*aperShape.getParameterVector())
+        aperShapeX2 = aperShape.convolve(aperShape)
         corrFlux = measBase.SdssShapeAlgorithm.computeFixedMomentsFlux(kernelAcf, aperShapeX2,
                                                                        kernelAcf.getBBox().getCenter())
         fluxErrScaling = (0.5*corrFlux.instFlux)**0.5
         return fluxErrScaling
 
-    def _convolve(self, exposure: afwImage.Exposure, modelPsf: afwDetection.GaussianPsf,
-                  measRecord: lsst.afw.table.SourceRecord) -> lsst.pipe.base.Struct:  # noqa: F821
-        """Convolve the ``exposure`` to make the PSF same as ``modelPsf``.
+    def _gaussianize(self, exposure: afwImage.Exposure, modelPsf: afwDetection.GaussianPsf,
+                     measRecord: lsst.afw.table.SourceRecord) -> lsst.pipe.base.Struct:  # noqa: F821
+        """Modify the ``exposure`` so that its PSF is a Gaussian.
+
+        Compute the convolution kernel to make the PSF same as ``modelPsf``
+        and return the Gaussianized exposure in a struct.
 
         Parameters
         ----------
@@ -348,6 +356,11 @@ class BaseGaapFluxPlugin(measBase.GenericPlugin):
             ``psfMatchingKernel``, the kernel that ``exposure`` was convolved
             by to obtain ``psfMatchedExposure``. Typically, the bounding box of
             ``psfMatchedExposure`` is larger than that of the footprint.
+
+        Notes
+        -----
+        During normal mode of operation, ``modelPsf`` is intended to be of the
+        type `~lsst.afw.detection.GaussianPsf`, this is not enforced.
         """
         footprint = measRecord.getFootprint()
         bbox = footprint.getBBox()
@@ -359,7 +372,7 @@ class BaseGaapFluxPlugin(measBase.GenericPlugin):
         # along the edges, the subExposure needs to be expanded by another
         # N pixels. So grow the bounding box initially by 2N pixels on either
         # side.
-        pixToGrow = self.config.modelPsfMatch.kernel.active.kernelSize - 1
+        pixToGrow = self.config._modelPsfMatch.kernel.active.kernelSize - 1
         bbox.grow(pixToGrow)
 
         # The bounding box may become too big and go out of bounds for sources
@@ -388,89 +401,297 @@ class BaseGaapFluxPlugin(measBase.GenericPlugin):
         # N pixels around the edges will have NO_DATA mask bit set,
         # where 2N+1 is the kernelSize. Set N number of pixels to erode without
         # reusing pixToGrow, as pixToGrow can be anything in principle.
-        pixToErode = self.config.modelPsfMatch.kernel.active.kernelSize//2
+        pixToErode = self.config._modelPsfMatch.kernel.active.kernelSize//2
         result.psfMatchedExposure = result.psfMatchedExposure[bbox.erodedBy(pixToErode)]
         return result
 
-    def measure(self, measRecord: lsst.afw.table.SourceRecord, exposure: afwImage.Exposure,  # noqa: F821
-                center: lsst.geom.Point2D) -> None:  # noqa: F821
-        # Docstring inherited.
+    def _measureFlux(self, measRecord: lsst.afw.table.SourceRecord,
+                     exposure: afwImage.Exposure, kernelAcf: afwImage.Image,
+                     center: lsst.geom.Point2D, aperShape: afwGeom.Quadrupole,
+                     baseName: str, fluxScaling: float) -> None:
+        """Measure the flux and populate the record.
+
+        Parameters
+        ----------
+        measRecord : `~lsst.afw.table.SourceRecord`
+            Catalog record for the source being measured.
+        exposure : `~lsst.afw.image.Exposure`
+            Subexposure containing the deblended source being measured.
+            The PSF attached to it should nominally be an
+            `lsst.afw.Detection.GaussianPsf` object, but not enforced.
+        kernelAcf : `~lsst.afw.image.Image`
+            An image representating the auto-correlation function of the
+            PSF-matching kernel.
+        center : `~lsst.geom.Point2D`
+            The centroid position of the source being measured.
+        aperShape : `~lsst.afw.geom.Quadrupole`
+            The shape parameter of the post-seeing Gaussian aperture.
+            It should be a valid quadrupole if ``fluxScaling`` is specified.
+        baseName : `str`
+            The base name of the GAaP field.
+        fluxScaling : `float`, optional
+            The multiplication factor by which the measured flux has to be
+            scaled. If `None` or unspecified, the pre-factor in Eq. A16
+            of Kuijken et al. (2015) is computed and applied.
+        """
+        # Calculate the integral in Eq. A17 of Kuijken et al. (2015)
+        # ``fluxErrScaling`` contains the factors not captured by
+        # ``fluxScaling`` and `instFluxErr`. It is 1 theoretically
+        # if ``kernelAcf`` is a Dirac-delta function.
+        fluxErrScaling = self._getFluxErrScaling(kernelAcf, aperShape)
+
+        fluxResult = measBase.SdssShapeAlgorithm.computeFixedMomentsFlux(exposure.getMaskedImage(),
+                                                                         aperShape, center)
+
+        # Scale the quantities in fluxResult and copy result to record
+        fluxResult.instFlux *= fluxScaling
+        fluxResult.instFluxErr *= fluxScaling*fluxErrScaling
+        fluxResultKey = FluxResultKey(measRecord.schema[baseName])
+        fluxResultKey.set(measRecord, fluxResult)
+
+    def _gaussianizeAndMeasure(self, measRecord: lsst.afw.table.SourceRecord,
+                               exposure: afwImage.Exposure,
+                               center: lsst.geom.Point2D) -> None:
+        """Measure the properties of a source on a single image.
+
+        The image may be from a single epoch, or it may be a coadd.
+
+        Parameters
+        ----------
+        measRecord : `~lsst.afw.table.SourceRecord`
+            Record describing the object being measured. Previously-measured
+            quantities may be retrieved from here, and it will be updated
+            in-place with the outputs of this plugin.
+        exposure : `~lsst.afw.image.ExposureF`
+            The pixel data to be measured, together with the associated PSF,
+            WCS, etc. All other sources in the image should have been replaced
+            by noise according to deblender outputs.
+        center : `~lsst.geom.Point2D`
+            Centroid location of the source being measured.
+
+        Raises
+        ------
+        GaapConvolutionError
+            Raised if the PSF Gaussianization fails for any of the target PSFs.
+        lsst.meas.base.FatalAlgorithmError
+            Raised if the Exposure does not contain a PSF model.
+
+        Notes
+        -----
+        This method is the entry point to the mixin from the concrete derived
+        classes.
+        """
         psf = exposure.getPsf()
         if psf is None:
             raise measBase.FatalAlgorithmError("No PSF in exposure")
 
         seeing = psf.computeShape(center).getTraceRadius()
         errorCollection = dict()
-        for sF in self.config.scalingFactors:
-            targetSigma = sF*seeing
-            stampSize = self.config.modelPsfDimension
-            targetPsf = afwDetection.GaussianPsf(stampSize, stampSize, targetSigma)
-            try:
-                result = self._convolve(exposure, targetPsf, measRecord)
-
-            except Exception as error:
-                errorCollection[str(sF)] = error
+        for scalingFactor in self.config.scalingFactors:
+            targetSigma = scalingFactor*seeing
+            # If this target PSF is bound to fail for all apertures,
+            # set the flags and move on without PSF Gaussianization.
+            if self._isAllFailure(measRecord, scalingFactor, targetSigma):
                 continue
 
-            convolved = result.psfMatchedExposure.getMaskedImage()
+            stampSize = self.config._modelPsfDimension
+            targetPsf = afwDetection.GaussianPsf(stampSize, stampSize, targetSigma)
+            try:
+                result = self._gaussianize(exposure, targetPsf, measRecord)
+            except Exception as error:
+                errorCollection[str(scalingFactor)] = error
+                continue
+
+            convolved = result.psfMatchedExposure
             kernelAcf = self._computeKernelAcf(result.psfMatchingKernel)
 
-            # Iterate over apertures
-            for sigma in self.config._sigmas:
-                baseName = self.ConfigClass._getGaapResultName(sF, sigma, self.name)
-                # Calculate the aperture shape and thepre-factor in
-                # Eq. A16 of Kuijken et al. (2015) to scale the flux.
-                # Include an extra factor of 0.5 to undo the normalization
-                # factor of 2 in `computeFixedMomentsFlux`.
-                if sigma == "PsfFlux":
-                    # PSF photometry case
-                    aperSigma2 = targetSigma**2
-                    aperShape = afwGeom.Quadrupole(aperSigma2, aperSigma2, 0.0)
-                    fluxScaling = 1.0  # Eq. A16 of Kuijken et al. (2015)
-                else:
-                    try:
-                        if sigma == "Optimal":  # Hook for DM-29290
-                            # Optimal elliptical aperture case
-                            # TODO: DM-29290
-                            # Set `normalize` to True to check if aperShape is valid.
-                            continue
-                        else:
-                            aperSigma2 = sigma**2 - targetSigma**2
-                            aperShape = afwGeom.Quadrupole(aperSigma2, aperSigma2, 0.0,
-                                                           normalize=True)
-                            fluxScaling = 0.5*sigma**2/aperSigma2
-                    except (InvalidParameterError, ZeroDivisionError):
-                        # Raised when the aperture is invalid
-                        flagKey = measRecord.schema.join(baseName, "flag_bigpsf")
-                        measRecord.set(flagKey, 1)
-                        continue
+            measureFlux = partial(self._measureFlux, measRecord, convolved, kernelAcf, center)
 
-                fluxResult = measBase.SdssShapeAlgorithm.computeFixedMomentsFlux(convolved, aperShape, center)
+            if self.config.doPsfPhotometry:
+                baseName = self.ConfigClass._getGaapResultName(scalingFactor, "PsfFlux", self.name)
+                aperShape = targetPsf.computeShape()
+                measureFlux(aperShape, baseName, fluxScaling=1)
 
-                # Calculate the integral in Eq. A17 of Kuijken et al. (2015)
-                # ``fluxErrScaling`` contains the factors not captured by
-                # ``fluxScaling`` and `instFluxErr`. It is 1 theoretically
-                # if ``kernelAcf`` is a Dirac-delta function.
-                fluxErrScaling = self._getFluxErrScaling(kernelAcf, aperShape)
+            # Iterate over pre-defined circular apertures
+            for sigma in self.config.sigmas:
+                baseName = self.ConfigClass._getGaapResultName(scalingFactor, sigma, self.name)
+                if sigma <= targetSigma:
+                    # Raise when the aperture is invalid
+                    self._setFlag(measRecord, baseName)
+                    continue
 
-                # Scale the fluxResult and copy result to record
-                fluxResult.instFlux *= fluxScaling
-                fluxResult.instFluxErr *= fluxScaling*fluxErrScaling
-                fluxResultKey = FluxResultKey(measRecord.schema[baseName])
-                fluxResultKey.set(measRecord, fluxResult)
+                aperSigma2 = sigma**2 - targetSigma**2
+                aperShape = afwGeom.Quadrupole(aperSigma2, aperSigma2, 0.0)
+                fluxScaling = 0.5*sigma**2/aperSigma2
+                measureFlux(aperShape, baseName, fluxScaling)
 
         # Raise GaapConvolutionError before exiting the plugin
         # if the collection of errors is not empty
         if errorCollection:
             raise GaapConvolutionError(errorCollection)
 
+    @staticmethod
+    def _setFlag(measRecord, baseName, flagName="bigpsf"):
+        """Set the GAaP flag determined by ``baseName`` and ``flagName``.
 
-GaapFluxConfig = BaseGaapFluxConfig
-GaapFluxPlugin = BaseGaapFluxPlugin.makeSingleFramePlugin(PLUGIN_NAME)
-"""Single-frame version of `GaapFluxPlugin`.
-"""
+        A convenience method to set {baseName}_flag_{flagName} to True.
+        To set the general flag indicating measurement failure, use _failKey
+        directly.
 
-ForcedGaapFluxConfig = BaseGaapFluxConfig
-ForcedGaapFluxPlugin = BaseGaapFluxPlugin.makeForcedPlugin(PLUGIN_NAME)
-"""Forced version of `GaapFluxPlugin`.
-"""
+        Parameters
+        ----------
+        measRecord : `~lsst.afw.table.SourceRecord`
+            Record describing the source being measured.
+        baseName : `str`
+            The base name of the GAaP field for which the flag must be set.
+        flagName : `str`
+            The name of the GAaP flag to be set.
+        """
+        flagKey = measRecord.schema.join(baseName, f"flag_{flagName}")
+        measRecord.set(flagKey, True)
+
+    def _isAllFailure(self, measRecord, scalingFactor, targetSigma) -> bool:
+        """Check if all measurements would result in failure.
+
+        If all of the pre-seeing apertures are smaller than size of the
+        target PSF for the given ``scalingFactor``, then set the
+        `flag_bigpsf` for all fields corresponding to ``scalingFactor``
+        and move on instead of spending computational effort in
+        Gaussianizing the exposure.
+
+        Parameters
+        ----------
+        measRecord : `~lsst.afw.table.SourceRecord`
+            Record describing the source being measured.
+        scalingFactor : `float`
+            The multiplicative factor by which the seeing is scaled.
+        targetSigma : `float`
+            Sigma of the target circular Gaussian PSF.
+
+        Returns
+        -------
+        allFailure : `bool`
+            A boolean value indicating whether all measurements would fail.
+
+        Notes
+        ----
+        If doPsfPhotometry is set to True, then this will always return False.
+        """
+        if self.config.doPsfPhotometry:
+            return False
+
+        allFailure = targetSigma >= max(self.config.sigmas)
+
+        # Set all failure flags if allFailure is True.
+        if allFailure:
+            for sigma in self.config.sigmas:
+                baseName = self.ConfigClass._getGaapResultNames(scalingFactor, sigma, self.name)
+                self._setFlag(measRecord, baseName)
+
+        return allFailure
+
+    def fail(self, measRecord, error=None):
+        """Record a measurement failure.
+
+        This default implementation simply records the failure in the source
+        record and is inherited by the SingleFrameGaapFluxPlugin and
+        ForcedGaapFluxPlugin.
+
+        Parameters
+        ----------
+        measRecord : `lsst.afw.table.SourceRecord`
+            Catalog record for the source being measured.
+        error : `Exception`
+            Error causing failure, or `None`.
+        """
+        measRecord.set(self._failKey, True)
+
+
+class SingleFrameGaapFluxConfig(BaseGaapFluxConfig,
+                                measBase.SingleFramePluginConfig):
+    """Config for SingleFrameGaapFluxPlugin."""
+
+
+@measBase.register(PLUGIN_NAME)
+class SingleFrameGaapFluxPlugin(BaseGaapFluxMixin, measBase.SingleFramePlugin):
+    """Gaussian Aperture and PSF photometry algorithm in single-frame mode.
+
+    Parameters
+    ----------
+    config : `GaapFluxConfig`
+        Plugin configuration.
+    name : `str`
+        Plugin name, for registering.
+    schema : `lsst.afw.table.Schema`
+        The schema for the measurement output catalog. New fields will be added
+        to hold measurements produced by this plugin.
+    metadata : `lsst.daf.base.PropertySet`
+        Plugin metadata that will be attached to the output catalog.
+    logName : `str`, optional
+        Name to use when logging errors.
+
+    Notes
+    -----
+    This plugin must be run in forced mode to produce consistent colors across
+    the different bandpasses.
+    """
+    ConfigClass = SingleFrameGaapFluxConfig
+
+    def __init__(self, config, name, schema, metadata, logName=None):
+        BaseGaapFluxMixin.__init__(self, config, name, schema, logName=logName)
+        measBase.SingleFramePlugin.__init__(self, config, name, schema, metadata, logName=logName)
+
+    @classmethod
+    def getExecutionOrder(cls) -> float:
+        # Docstring inherited
+        return cls.FLUX_ORDER
+
+    def measure(self, measRecord, exposure):
+        # Docstring inherited.
+        center = measRecord.getCentroid()
+        self._gaussianizeAndMeasure(measRecord, exposure, center)
+
+
+class ForcedGaapFluxConfig(BaseGaapFluxConfig, measBase.ForcedPluginConfig):
+    """Config for ForcedGaapFluxPlugin."""
+
+
+@measBase.register(PLUGIN_NAME)
+class ForcedGaapFluxPlugin(BaseGaapFluxMixin, measBase.ForcedPlugin):
+    """Gaussian Aperture and PSF (GAaP) photometry plugin in forced mode.
+
+    This is the GAaP plugin to run for consistent colors across the bandpasses.
+
+    Parameters
+    ----------
+    config : `GaapFluxConfig`
+        Plugin configuration.
+    name : `str`
+        Plugin name, for registering.
+    schemaMapper : `lsst.afw.table.SchemaMapper`
+        A mapping from reference catalog fields to output catalog fields.
+        Output fields will be added to the output schema.
+        for the measurement output catalog. New fields will be added
+        to hold measurements produced by this plugin.
+    metadata : `lsst.daf.base.PropertySet`
+        Plugin metadata that will be attached to the output catalog.
+    logName : `str`, optional
+        Name to use when logging errors.
+    """
+    ConfigClass = ForcedGaapFluxConfig
+
+    def __init__(self, config, name, schemaMapper, metadata, logName=None):
+        schema = schemaMapper.editOutputSchema()
+        BaseGaapFluxMixin.__init__(self, config, name, schema, logName=logName)
+        measBase.ForcedPlugin.__init__(self, config, name, schemaMapper, metadata, logName=logName)
+
+    @classmethod
+    def getExecutionOrder(cls) -> float:
+        # Docstring inherited.
+        return cls.FLUX_ORDER
+
+    def measure(self, measRecord, exposure, refRecord, refWcs):
+        # Docstring inherited.
+        wcs = exposure.getWcs()
+        center = wcs.skyToPixel(refWcs.pixelToSky(refRecord.getCentroid()))
+        self._gaussianizeAndMeasure(measRecord, exposure, center)
