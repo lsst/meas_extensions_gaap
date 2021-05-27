@@ -36,13 +36,12 @@ import lsst.meas.base as measBase
 from lsst.meas.base.fluxUtilities import FluxResultKey
 import lsst.pex.config as pexConfig
 from lsst.ip.diffim import ModelPsfMatchTask
-from lsst.pex.exceptions import RuntimeError as pexRuntimeError
 import scipy.signal
 
 PLUGIN_NAME = "ext_gaap_GaapFlux"
 
 
-class GaapConvolutionError(pexRuntimeError):
+class GaapConvolutionError(measBase.exceptions.MeasurementError):
     """Collection of any unexpected errors in GAaP during PSF Gaussianization.
 
     The PSF Gaussianization procedure using `modelPsfMatchTask` may throw
@@ -56,12 +55,13 @@ class GaapConvolutionError(pexRuntimeError):
         The values are exceptions raised, while the keys are the loop variables
         (in `str` format) where the exceptions were raised.
     """
-    def __init__(self, errors: dict[str, Exception], *args, **kwds):
+    def __init__(self, errors: dict[str, Exception]):
+        self.errorDict = errors
         message = "Problematic scaling factors = "
         message += ", ".join(errors)
         message += " Errors: "
         message += " | ".join(set(msg.__repr__() for msg in errors.values()))  # msg.cpp.what() misses type
-        super().__init__(message, *args, **kwds)
+        super().__init__(message, 1)  # the second argument does not matter.
 
 
 class BaseGaapFluxConfig(measBase.BaseMeasurementPluginConfig):
