@@ -528,7 +528,7 @@ class BaseGaapFluxMixin:
                 baseName = self.ConfigClass._getGaapResultName(scalingFactor, sigma, self.name)
                 if sigma <= targetSigma:
                     # Raise when the aperture is invalid
-                    self._setFlag(measRecord, baseName)
+                    self._setFlag(measRecord, baseName, "bigpsf")
                     continue
 
                 aperSigma2 = sigma**2 - targetSigma**2
@@ -542,12 +542,13 @@ class BaseGaapFluxMixin:
             raise GaapConvolutionError(errorCollection)
 
     @staticmethod
-    def _setFlag(measRecord, baseName, flagName="bigpsf"):
+    def _setFlag(measRecord, baseName, flagName=None):
         """Set the GAaP flag determined by ``baseName`` and ``flagName``.
 
         A convenience method to set {baseName}_flag_{flagName} to True.
-        To set the general flag indicating measurement failure, use _failKey
-        directly.
+        This also automatically sets the generic {baseName}_flag to True.
+        To set the general plugin flag indicating measurement failure,
+        use _failKey directly.
 
         Parameters
         ----------
@@ -555,11 +556,16 @@ class BaseGaapFluxMixin:
             Record describing the source being measured.
         baseName : `str`
             The base name of the GAaP field for which the flag must be set.
-        flagName : `str`
-            The name of the GAaP flag to be set.
+        flagName : `str`, optional
+            The name of the specific flag to set along with the general flag.
+            If unspecified, only the general flag corresponding to ``baseName``
+            is set. For now, the only value that can be specified is "bigpsf".
         """
-        flagKey = measRecord.schema.join(baseName, f"flag_{flagName}")
-        measRecord.set(flagKey, True)
+        if flagName is not None:
+            specificFlagKey = measRecord.schema.join(baseName, f"flag_{flagName}")
+            measRecord.set(specificFlagKey, True)
+        genericFlagKey = measRecord.schema.join(baseName, "flag")
+        measRecord.set(genericFlagKey, True)
 
     def _isAllFailure(self, measRecord, scalingFactor, targetSigma) -> bool:
         """Check if all measurements would result in failure.
@@ -596,8 +602,8 @@ class BaseGaapFluxMixin:
         # Set all failure flags if allFailure is True.
         if allFailure:
             for sigma in self.config.sigmas:
-                baseName = self.ConfigClass._getGaapResultNames(scalingFactor, sigma, self.name)
-                self._setFlag(measRecord, baseName)
+                baseName = self.ConfigClass._getGaapResultName(scalingFactor, sigma, self.name)
+                self._setFlag(measRecord, baseName, "bigpsf")
 
         return allFailure
 

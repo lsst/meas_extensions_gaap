@@ -270,7 +270,7 @@ class GaapFluxTestCase(lsst.utils.tests.TestCase):
         record = catalog[0]
         algorithm.measure(record, exposure)
         seeing = exposure.getPsf().getSigma()
-        # Measurement must fail (i.e., flag_bigpsf must be set) if
+        # Measurement must fail (i.e., flag_bigpsf and flag must be set) if
         # sigma < scalingFactor * seeing
         # Ensure that there is at least one combination of parameters that fail
         if not(min(gaapConfig.sigmas) < seeing*max(gaapConfig.scalingFactors)):
@@ -286,8 +286,10 @@ class GaapFluxTestCase(lsst.utils.tests.TestCase):
             baseName = gaapConfig._getGaapResultName(scalingFactor, sigma, algName)
             if targetSigma >= sigma:
                 self.assertTrue(record[baseName+"_flag_bigpsf"])
+                self.assertTrue(record[baseName+"_flag"])
             else:
                 self.assertFalse(record[baseName+"_flag_bigpsf"])
+                self.assertFalse(record[baseName+"_flag"])
 
         # Ensure that the edge flag is set for the source at the corner.
         record = catalog[2]
