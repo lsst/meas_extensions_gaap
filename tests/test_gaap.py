@@ -94,7 +94,7 @@ def makeGalaxyExposure(scale, psfSigma=0.9, flux=1000., galSigma=3.7, variance=1
     return exposure, center
 
 
-class GaapFluxTestCase(lsst.utils.tests.TestCase):
+class GaapFluxTestCase(lsst.meas.base.tests.AlgorithmTestCase, lsst.utils.tests.TestCase):
     """Main test case for the GAaP plugin.
     """
     def setUp(self):
@@ -226,6 +226,52 @@ class GaapFluxTestCase(lsst.utils.tests.TestCase):
         """Run GAaP as forced measurement plugin.
         """
         self.runGaap(True, psfSigma)
+
+    def testFail(self, scalingFactors=[100.], sigmas=[500.]):
+        """Test that the fail method sets the flags correctly.
+
+        Set config parameters that are guaranteed to raise exceptions,
+        and check that they are handled properly by the `fail` method.
+        For failure modes not handled by the `fail` method, we test them
+        in the ``testFlags`` method.
+        """
+        algName = "ext_gaap_GaapFlux"
+        dependencies = ("base_SdssShape",)
+        config = self.makeSingleFrameMeasurementConfig(algName, dependencies=dependencies)
+        gaapConfig = config.plugins[algName]
+        gaapConfig.scalingFactors = scalingFactors
+        gaapConfig.sigmas = sigmas
+        gaapConfig.doPsfPhotometry = True
+
+        gaapConfig.scaleByFwhm = True
+        self.assertTrue(gaapConfig.scaleByFwhm)  # Test the getter method.
+
+        algMetadata = lsst.daf.base.PropertyList()
+        sfmTask = self.makeSingleFrameMeasurementTask(algName, dependencies=dependencies, config=config,
+                                                      algMetadata=algMetadata)
+        exposure, catalog = self.dataset.realize(0.0, sfmTask.schema)
+        # self.recordPsfShape(catalog)  # Uncomment after DM-29290 is merged.
+        sfmTask.run(catalog, exposure)
+
+        for record in catalog:
+            self.assertFalse(record[algName + "_flag"])
+            for scalingFactor in scalingFactors:
+                flagName = gaapConfig._getGaapResultName(scalingFactor, "flag_gaussianization", algName)
+                self.assertTrue(record[flagName])
+                for sigma in sigmas:  # ["Optimal"]  # Uncomment after DM-29290 is merged.
+                    baseName = gaapConfig._getGaapResultName(scalingFactor, sigma, algName)
+                    self.assertTrue(record[baseName + "_flag"])
+                    self.assertFalse(record[baseName + "_flag_bigpsf"])
+
+                baseName = gaapConfig._getGaapResultName(scalingFactor, "PsfFlux", algName)
+                self.assertTrue(record[baseName + "_flag"])
+
+        # Try and "fail" with no PSF.
+        # Since fatal exceptions are not caught by the measurement framework,
+        # use a context manager and catch it here.
+        exposure.setPsf(None)
+        with self.assertRaises(lsst.meas.base.FatalAlgorithmError):
+            sfmTask.run(catalog, exposure)
 
     def testFlags(self, sigmas=[2.5, 3.0, 4.0], scalingFactors=[1.15, 1.25, 1.4]):
         """Test that GAaP flags are set properly.
