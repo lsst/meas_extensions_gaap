@@ -621,7 +621,16 @@ class BaseGaapFluxMixin:
         error : `Exception`
             Error causing failure, or `None`.
         """
-        measRecord.set(self._failKey, True)
+        if error is not None:
+            for scalingFactor in error.errorDict:
+                flagName = self.ConfigClass._getGaapResultName(scalingFactor, "flag_gaussianization",
+                                                               self.name)
+                measRecord.set(flagName, True)
+                for sigma in self.config._sigmas:
+                    baseName = self.ConfigClass._getGaapResultName(scalingFactor, sigma, self.name)
+                    self._setFlag(measRecord, baseName)
+        else:
+            measRecord.set(self._failKey, True)
 
 
 class SingleFrameGaapFluxConfig(BaseGaapFluxConfig,
