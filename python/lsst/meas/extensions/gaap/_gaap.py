@@ -262,6 +262,8 @@ class BaseGaapFluxMixin:
             middleName = self.ConfigClass._getGaapResultName(scalingFactor, sigma)
             flagDefs.add(schema.join(middleName, "flag_bigpsf"), "The Gaussianized PSF is "
                                                                  "bigger than the aperture")
+            flagDefs.add(schema.join(middleName, "flag"), "Generic failure flag for this set of config "
+                                                          "parameters. ")
 
         # PSF photometry
         if config.doPsfPhotometry:
@@ -269,6 +271,15 @@ class BaseGaapFluxMixin:
                 baseName = self.ConfigClass._getGaapResultName(scalingFactor, "PsfFlux", name)
                 doc = f"GAaP Flux with PSF aperture after multiplying the seeing by {scalingFactor}"
                 FluxResultKey.addFields(schema, name=baseName, doc=doc)
+
+                # Remove the prefix_ since FlagHandler prepends it
+                middleName = self.ConfigClass._getGaapResultName(scalingFactor, "PsfFlux")
+                flagDefs.add(schema.join(middleName, "flag"), "Generic failure flag for this set of config "
+                                                              "parameters. ")
+
+        for scalingFactor in config.scalingFactors:
+            flagName = self.ConfigClass._getGaapResultName(scalingFactor, "flag_gaussianization")
+            flagDefs.add(flagName, "PSF Gaussianization failed when trying to scale by this factor.")
 
         self.flagHandler = measBase.FlagHandler.addFields(schema, name, flagDefs)
         self.EdgeFlagKey = schema.addField(schema.join(name, "flag_edge"), type="Flag",
