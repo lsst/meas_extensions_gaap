@@ -115,6 +115,16 @@ class BaseGaapFluxConfig(measBase.BaseMeasurementPluginConfig):
             "This does not produce consistent color estimates."
     )
 
+    registerForApCorr = pexConfig.Field(
+        dtype=bool,
+        default=True,
+        doc="Register measurements for aperture correction? "
+            "The aperture correction registration is done when the plugin is instatiated and not "
+            "during import because the column names are derived from the configuration rather than being "
+            "static. Sometimes you want to turn this off, e.g., when you use aperture corrections derived "
+            "from somewhere else through a 'proxy' mechanism."
+    )
+
     # scaleByFwm is the only config field of modelPsfMatch Task that we allow
     # the user to set without explicitly setting the modelPsfMatch config.
     # It is intended to abstract away the underlying implementation.
@@ -276,6 +286,9 @@ class BaseGaapFluxMixin:
                 middleName = self.ConfigClass._getGaapResultName(scalingFactor, "PsfFlux")
                 flagDefs.add(schema.join(middleName, "flag"), "Generic failure flag for this set of config "
                                                               "parameters. ")
+        if config.registerForApCorr:
+            for baseName in config.getAllGaapResultNames(name):
+                measBase.addApCorrName(baseName)
 
         for scalingFactor in config.scalingFactors:
             flagName = self.ConfigClass._getGaapResultName(scalingFactor, "flag_gaussianization")
