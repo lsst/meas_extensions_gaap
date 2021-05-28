@@ -36,13 +36,12 @@ import lsst.meas.base as measBase
 from lsst.meas.base.fluxUtilities import FluxResultKey
 import lsst.pex.config as pexConfig
 from lsst.ip.diffim import ModelPsfMatchTask
-from lsst.pex.exceptions import RuntimeError as pexRuntimeError
 import scipy.signal
 
 PLUGIN_NAME = "ext_gaap_GaapFlux"
 
 
-class GaapConvolutionError(pexRuntimeError):
+class GaapConvolutionError(measBase.exceptions.MeasurementError):
     """Collection of any unexpected errors in GAaP during PSF Gaussianization.
 
     The PSF Gaussianization procedure using `modelPsfMatchTask` may throw
@@ -56,12 +55,13 @@ class GaapConvolutionError(pexRuntimeError):
         The values are exceptions raised, while the keys are the loop variables
         (in `str` format) where the exceptions were raised.
     """
-    def __init__(self, errors: dict[str, Exception], *args, **kwds):
+    def __init__(self, errors: dict[str, Exception]):
+        self.errorDict = errors
         message = "Problematic scaling factors = "
         message += ", ".join(errors)
         message += " Errors: "
         message += " | ".join(set(msg.__repr__() for msg in errors.values()))  # msg.cpp.what() misses type
-        super().__init__(message, *args, **kwds)
+        super().__init__(message, 1)  # the second argument does not matter.
 
 
 class BaseGaapFluxConfig(measBase.BaseMeasurementPluginConfig):
@@ -260,8 +260,10 @@ class BaseGaapFluxMixin:
 
             # Remove the prefix_ since FlagHandler prepends it
             middleName = self.ConfigClass._getGaapResultName(scalingFactor, sigma)
-            flagDefs.add(schema.join(middleName, "flag_bigpsf"), "The Gaussianized PSF is "
+            flagDefs.add(schema.join(middleName, "flag_bigPsf"), "The Gaussianized PSF is "
                                                                  "bigger than the aperture")
+            flagDefs.add(schema.join(middleName, "flag"), "Generic failure flag for this set of config "
+                                                          "parameters. ")
 
         # PSF photometry
         if config.doPsfPhotometry:
@@ -269,6 +271,15 @@ class BaseGaapFluxMixin:
                 baseName = self.ConfigClass._getGaapResultName(scalingFactor, "PsfFlux", name)
                 doc = f"GAaP Flux with PSF aperture after multiplying the seeing by {scalingFactor}"
                 FluxResultKey.addFields(schema, name=baseName, doc=doc)
+
+                # Remove the prefix_ since FlagHandler prepends it
+                middleName = self.ConfigClass._getGaapResultName(scalingFactor, "PsfFlux")
+                flagDefs.add(schema.join(middleName, "flag"), "Generic failure flag for this set of config "
+                                                              "parameters. ")
+
+        for scalingFactor in config.scalingFactors:
+            flagName = self.ConfigClass._getGaapResultName(scalingFactor, "flag_gaussianization")
+            flagDefs.add(flagName, "PSF Gaussianization failed when trying to scale by this factor.")
 
         self.flagHandler = measBase.FlagHandler.addFields(schema, name, flagDefs)
         self.EdgeFlagKey = schema.addField(schema.join(name, "flag_edge"), type="Flag",
@@ -517,7 +528,7 @@ class BaseGaapFluxMixin:
                 baseName = self.ConfigClass._getGaapResultName(scalingFactor, sigma, self.name)
                 if sigma <= targetSigma:
                     # Raise when the aperture is invalid
-                    self._setFlag(measRecord, baseName)
+                    self._setFlag(measRecord, baseName, "bigPsf")
                     continue
 
                 aperSigma2 = sigma**2 - targetSigma**2
@@ -531,12 +542,13 @@ class BaseGaapFluxMixin:
             raise GaapConvolutionError(errorCollection)
 
     @staticmethod
-    def _setFlag(measRecord, baseName, flagName="bigpsf"):
+    def _setFlag(measRecord, baseName, flagName=None):
         """Set the GAaP flag determined by ``baseName`` and ``flagName``.
 
         A convenience method to set {baseName}_flag_{flagName} to True.
-        To set the general flag indicating measurement failure, use _failKey
-        directly.
+        This also automatically sets the generic {baseName}_flag to True.
+        To set the general plugin flag indicating measurement failure,
+        use _failKey directly.
 
         Parameters
         ----------
@@ -544,18 +556,23 @@ class BaseGaapFluxMixin:
             Record describing the source being measured.
         baseName : `str`
             The base name of the GAaP field for which the flag must be set.
-        flagName : `str`
-            The name of the GAaP flag to be set.
+        flagName : `str`, optional
+            The name of the specific flag to set along with the general flag.
+            If unspecified, only the general flag corresponding to ``baseName``
+            is set. For now, the only value that can be specified is "bigPsf".
         """
-        flagKey = measRecord.schema.join(baseName, f"flag_{flagName}")
-        measRecord.set(flagKey, True)
+        if flagName is not None:
+            specificFlagKey = measRecord.schema.join(baseName, f"flag_{flagName}")
+            measRecord.set(specificFlagKey, True)
+        genericFlagKey = measRecord.schema.join(baseName, "flag")
+        measRecord.set(genericFlagKey, True)
 
     def _isAllFailure(self, measRecord, scalingFactor, targetSigma) -> bool:
         """Check if all measurements would result in failure.
 
         If all of the pre-seeing apertures are smaller than size of the
         target PSF for the given ``scalingFactor``, then set the
-        `flag_bigpsf` for all fields corresponding to ``scalingFactor``
+        `flag_bigPsf` for all fields corresponding to ``scalingFactor``
         and move on instead of spending computational effort in
         Gaussianizing the exposure.
 
@@ -585,8 +602,8 @@ class BaseGaapFluxMixin:
         # Set all failure flags if allFailure is True.
         if allFailure:
             for sigma in self.config.sigmas:
-                baseName = self.ConfigClass._getGaapResultNames(scalingFactor, sigma, self.name)
-                self._setFlag(measRecord, baseName)
+                baseName = self.ConfigClass._getGaapResultName(scalingFactor, sigma, self.name)
+                self._setFlag(measRecord, baseName, "bigPsf")
 
         return allFailure
 
@@ -604,7 +621,16 @@ class BaseGaapFluxMixin:
         error : `Exception`
             Error causing failure, or `None`.
         """
-        measRecord.set(self._failKey, True)
+        if error is not None:
+            for scalingFactor in error.errorDict:
+                flagName = self.ConfigClass._getGaapResultName(scalingFactor, "flag_gaussianization",
+                                                               self.name)
+                measRecord.set(flagName, True)
+                for sigma in self.config._sigmas:
+                    baseName = self.ConfigClass._getGaapResultName(scalingFactor, sigma, self.name)
+                    self._setFlag(measRecord, baseName)
+        else:
+            measRecord.set(self._failKey, True)
 
 
 class SingleFrameGaapFluxConfig(BaseGaapFluxConfig,
