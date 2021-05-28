@@ -260,7 +260,7 @@ class BaseGaapFluxMixin:
 
             # Remove the prefix_ since FlagHandler prepends it
             middleName = self.ConfigClass._getGaapResultName(scalingFactor, sigma)
-            flagDefs.add(schema.join(middleName, "flag_bigpsf"), "The Gaussianized PSF is "
+            flagDefs.add(schema.join(middleName, "flag_bigPsf"), "The Gaussianized PSF is "
                                                                  "bigger than the aperture")
             flagDefs.add(schema.join(middleName, "flag"), "Generic failure flag for this set of config "
                                                           "parameters. ")
@@ -528,7 +528,7 @@ class BaseGaapFluxMixin:
                 baseName = self.ConfigClass._getGaapResultName(scalingFactor, sigma, self.name)
                 if sigma <= targetSigma:
                     # Raise when the aperture is invalid
-                    self._setFlag(measRecord, baseName, "bigpsf")
+                    self._setFlag(measRecord, baseName, "bigPsf")
                     continue
 
                 aperSigma2 = sigma**2 - targetSigma**2
@@ -559,7 +559,7 @@ class BaseGaapFluxMixin:
         flagName : `str`, optional
             The name of the specific flag to set along with the general flag.
             If unspecified, only the general flag corresponding to ``baseName``
-            is set. For now, the only value that can be specified is "bigpsf".
+            is set. For now, the only value that can be specified is "bigPsf".
         """
         if flagName is not None:
             specificFlagKey = measRecord.schema.join(baseName, f"flag_{flagName}")
@@ -572,7 +572,7 @@ class BaseGaapFluxMixin:
 
         If all of the pre-seeing apertures are smaller than size of the
         target PSF for the given ``scalingFactor``, then set the
-        `flag_bigpsf` for all fields corresponding to ``scalingFactor``
+        `flag_bigPsf` for all fields corresponding to ``scalingFactor``
         and move on instead of spending computational effort in
         Gaussianizing the exposure.
 
@@ -603,7 +603,7 @@ class BaseGaapFluxMixin:
         if allFailure:
             for sigma in self.config.sigmas:
                 baseName = self.ConfigClass._getGaapResultName(scalingFactor, sigma, self.name)
-                self._setFlag(measRecord, baseName, "bigpsf")
+                self._setFlag(measRecord, baseName, "bigPsf")
 
         return allFailure
 
