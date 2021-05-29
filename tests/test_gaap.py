@@ -247,6 +247,7 @@ class GaapFluxTestCase(lsst.meas.base.tests.AlgorithmTestCase, lsst.utils.tests.
         gaapConfig.scalingFactors = scalingFactors
         gaapConfig.sigmas = sigmas
         gaapConfig.doPsfPhotometry = True
+        gaapConfig.doOptimalPhotometry = True
 
         gaapConfig.scaleByFwhm = True
         self.assertTrue(gaapConfig.scaleByFwhm)  # Test the getter method.
@@ -255,7 +256,7 @@ class GaapFluxTestCase(lsst.meas.base.tests.AlgorithmTestCase, lsst.utils.tests.
         sfmTask = self.makeSingleFrameMeasurementTask(algName, dependencies=dependencies, config=config,
                                                       algMetadata=algMetadata)
         exposure, catalog = self.dataset.realize(0.0, sfmTask.schema)
-        # self.recordPsfShape(catalog)  # Uncomment after DM-29290 is merged.
+        self.recordPsfShape(catalog)
         sfmTask.run(catalog, exposure)
 
         for record in catalog:
@@ -263,7 +264,7 @@ class GaapFluxTestCase(lsst.meas.base.tests.AlgorithmTestCase, lsst.utils.tests.
             for scalingFactor in scalingFactors:
                 flagName = gaapConfig._getGaapResultName(scalingFactor, "flag_gaussianization", algName)
                 self.assertTrue(record[flagName])
-                for sigma in sigmas:  # ["Optimal"]  # Uncomment after DM-29290 is merged.
+                for sigma in sigmas + ["Optimal"]:
                     baseName = gaapConfig._getGaapResultName(scalingFactor, sigma, algName)
                     self.assertTrue(record[baseName + "_flag"])
                     self.assertFalse(record[baseName + "_flag_bigPsf"])
