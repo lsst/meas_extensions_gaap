@@ -119,7 +119,7 @@ class BaseGaapFluxConfig(measBase.BaseMeasurementPluginConfig):
 
     doOptimalPhotometry = pexConfig.Field(
         dtype=bool,
-        default=False,  # Temporarily disabled until measurement is implemented.
+        default=True,
         doc="Perform optimal photometry with near maximal SNR using an adaptive elliptical aperture? "
             "This requires a shape algorithm to have been run previously."
     )
