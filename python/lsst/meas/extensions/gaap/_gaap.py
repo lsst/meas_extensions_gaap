@@ -576,14 +576,14 @@ class BaseGaapFluxMixin:
 
             if self.config.doPsfPhotometry:
                 baseName = self.ConfigClass._getGaapResultName(scalingFactor, "PsfFlux", self.name)
-                aperShape = targetPsf.computeShape()
+                aperShape = psfShape
                 measureFlux(aperShape, baseName, fluxScaling=1)
 
             if self.config.doOptimalPhotometry:
                 baseName = self.ConfigClass._getGaapResultName(scalingFactor, "Optimal", self.name)
                 optimalShape = measRecord.get(self.optimalShapeKey)
                 aperShape = afwGeom.Quadrupole(optimalShape.getParameterVector()
-                                               - targetPsf.computeShape().getParameterVector())
+                                               - psfShape.getParameterVector())
                 measureFlux(aperShape, baseName)
 
             # Iterate over pre-defined circular apertures
