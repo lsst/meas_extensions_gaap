@@ -493,7 +493,6 @@ class BaseGaapFluxMixin:
             try:
                 aperShape.normalize()
                 # Calculate the pre-seeing aperture.
-                # This should nominally be the same as optimalShape.
                 preseeingShape = aperShape.convolve(exposure.getPsf().computeShape())
                 fluxScaling = 0.5*preseeingShape.getArea()/aperShape.getArea()
             except (InvalidParameterError, ZeroDivisionError):
@@ -550,6 +549,7 @@ class BaseGaapFluxMixin:
         psf = exposure.getPsf()
         if psf is None:
             raise measBase.FatalAlgorithmError("No PSF in exposure")
+        wcs = exposure.getWcs()
 
         seeing = psf.computeShape(center).getTraceRadius()
         errorCollection = dict()
@@ -572,6 +572,7 @@ class BaseGaapFluxMixin:
             kernelAcf = self._computeKernelAcf(result.psfMatchingKernel)
 
             measureFlux = partial(self._measureFlux, measRecord, convolved, kernelAcf, center)
+            psfShape = targetPsf.computeShape()  # This is inexpensive for a GaussianPsf
 
             if self.config.doPsfPhotometry:
                 baseName = self.ConfigClass._getGaapResultName(scalingFactor, "PsfFlux", self.name)
@@ -588,15 +589,17 @@ class BaseGaapFluxMixin:
             # Iterate over pre-defined circular apertures
             for sigma in self.config.sigmas:
                 baseName = self.ConfigClass._getGaapResultName(scalingFactor, sigma, self.name)
-                if sigma <= targetSigma:
+                if sigma <= targetSigma * wcs.getPixelScale(center).asArcseconds():
                     # Raise when the aperture is invalid
                     self._setFlag(measRecord, baseName, "bigPsf")
                     continue
 
-                aperSigma2 = sigma**2 - targetSigma**2
-                aperShape = afwGeom.Quadrupole(aperSigma2, aperSigma2, 0.0)
-                fluxScaling = 0.5*sigma**2/aperSigma2
-                measureFlux(aperShape, baseName, fluxScaling)
+                intrinsicShape = afwGeom.Quadrupole(sigma**2, sigma**2, 0.0)  # in sky coordinates
+                intrinsicShape.transformInPlace(wcs.linearizeSkyToPixel(center,
+                                                                        lsst.geom.arcseconds).getLinear())
+                aperShape = afwGeom.Quadrupole(intrinsicShape.getParameterVector()
+                                               - psfShape.getParameterVector())
+                measureFlux(aperShape, baseName)
 
         # Raise GaapConvolutionError before exiting the plugin
         # if the collection of errors is not empty
