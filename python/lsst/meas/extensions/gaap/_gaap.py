@@ -81,8 +81,8 @@ class BaseGaapFluxConfig(measBase.BaseMeasurementPluginConfig):
 
     sigmas = pexConfig.ListField(
         dtype=float,
-        default=[4.0, 5.0],
-        doc="List of sigmas (in pixels) of circular Gaussian apertures to apply on "
+        default=[0.7, 1.0],
+        doc="List of sigmas (in arcseconds) of circular Gaussian apertures to apply on "
             "pre-seeing galaxy images. These should be somewhat larger than the PSF "
             "(determined by ``scalingFactors``) to avoid measurement failures."
     )
@@ -175,8 +175,8 @@ class BaseGaapFluxConfig(measBase.BaseMeasurementPluginConfig):
         """Return the base name for GAaP fields
 
         For example, for a scaling factor of 1.15 for seeing and sigma of the
-        effective Gaussian aperture of 4.0 pixels, the returned value would be
-        "ext_gaap_GaapFlux_1_15x_4_0".
+        effective Gaussian aperture of 0.7 arcsec, the returned value would be
+        "ext_gaap_GaapFlux_1_15x_0_7".
 
         Notes
         -----
@@ -197,7 +197,7 @@ class BaseGaapFluxConfig(measBase.BaseMeasurementPluginConfig):
         name : `str`, optional
             The exact registered name of the GAaP plugin, typically either
             "ext_gaap_GaapFlux" or "undeblended_ext_gaap_GaapFlux". If ``name``
-            is None, then only the middle part (1_15x_4_0 in the example)
+            is None, then only the middle part (1_15x_0_7 in the example)
             without the leading underscore is returned.
 
         Returns
@@ -214,8 +214,8 @@ class BaseGaapFluxConfig(measBase.BaseMeasurementPluginConfig):
         """Generate the base names for all of the GAaP fields.
 
         For example, if the plugin is configured with `scalingFactors` = [1.15]
-        and `sigmas` = [4.0, 5.0] the returned expression would yield
-        ("ext_gaap_GaapFlux_1_15x_4_0", "ext_gaap_GaapFlux_1_15x_5_0") when
+        and `sigmas` = [0.7, 1.0] the returned expression would yield
+        ("ext_gaap_GaapFlux_1_15x_0_7", "ext_gaap_GaapFlux_1_15x_1_0") when
         called with ``name`` = "ext_gaap_GaapFlux". It will also generate
         "ext_gaap_GaapFlux_1_15x_PsfFlux" if `doPsfPhotometry` is True.
 
@@ -224,7 +224,7 @@ class BaseGaapFluxConfig(measBase.BaseMeasurementPluginConfig):
         name : `str`, optional
             The exact registered name of the GAaP plugin, typically either
             "ext_gaap_GaapFlux" or "undeblended_ext_gaap_GaapFlux". If ``name``
-            is None, then only the middle parts (("1_15x_4_0", "1_15x_5_0"),
+            is None, then only the middle parts (("1_15x_0_7", "1_15x_1_0"),
             for example) without the leading underscores are returned.
 
         Returns
@@ -648,7 +648,7 @@ class BaseGaapFluxMixin:
         scalingFactor : `float`
             The multiplicative factor by which the seeing is scaled.
         targetSigma : `float`
-            Sigma of the target circular Gaussian PSF.
+            Sigma (in pixels) of the target circular Gaussian PSF.
 
         Returns
         -------

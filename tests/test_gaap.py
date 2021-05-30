@@ -279,7 +279,7 @@ class GaapFluxTestCase(lsst.meas.base.tests.AlgorithmTestCase, lsst.utils.tests.
         with self.assertRaises(lsst.meas.base.FatalAlgorithmError):
             sfmTask.run(catalog, exposure)
 
-    def testFlags(self, sigmas=[2.5, 3.0, 4.0], scalingFactors=[1.15, 1.25, 1.4, 100.]):
+    def testFlags(self, sigmas=[0.4, 0.5, 0.7], scalingFactors=[1.15, 1.25, 1.4, 100.]):
         """Test that GAaP flags are set properly.
 
         Specifically, we test that
@@ -292,7 +292,7 @@ class GaapFluxTestCase(lsst.meas.base.tests.AlgorithmTestCase, lsst.utils.tests.
         Parameters
         ----------
         sigmas : `list` [`float`], optional
-            The list of sigmas (in pixels) to construct the
+            The list of sigmas (in arcseconds) to construct the
             `SingleFrameGaapFluxConfig`.
         scalingFactors : `list` [`float`], optional
             The list of scaling factors to construct the
@@ -515,7 +515,7 @@ class GaapFluxTestCase(lsst.meas.base.tests.AlgorithmTestCase, lsst.utils.tests.
         fluxErrScaling /= np.sqrt(np.pi*aperSigma**2)
         return fluxErrScaling
 
-    def testCorrelatedNoiseError(self, sigmas=[3.0, 4.0], scalingFactors=[1.15, 1.2, 1.25, 1.3, 1.4]):
+    def testCorrelatedNoiseError(self, sigmas=[0.6, 0.8], scalingFactors=[1.15, 1.2, 1.25, 1.3, 1.4]):
         """Test the scaling to standard error due to correlated noise.
 
         The uncertainty estimate on GAaP fluxes is scaled by an amount
@@ -576,7 +576,8 @@ class GaapFluxTestCase(lsst.meas.base.tests.AlgorithmTestCase, lsst.utils.tests.
             self.assertFloatsAlmostEqual(fluxErrScaling1, fluxErrScaling2, rtol=1e-4)
 
     @lsst.utils.tests.methodParameters(noise=(0.001, 0.01, 0.1))
-    def testMonteCarlo(self, noise, recordId=1, sigmas=[3.0, 4.0], scalingFactors=[1.1, 1.15, 1.2, 1.3, 1.4]):
+    def testMonteCarlo(self, noise, recordId=1, sigmas=[0.7, 1.0, 1.25],
+                       scalingFactors=[1.1, 1.15, 1.2, 1.3, 1.4]):
         """Test GAaP flux uncertainties.
 
         This test should demonstate that the estimated flux uncertainties agree
