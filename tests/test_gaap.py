@@ -435,19 +435,23 @@ class GaapFluxTestCase(lsst.meas.base.tests.AlgorithmTestCase, lsst.utils.tests.
         # analytical Gaussian integrals
         recordId = 1  # Elliptical Gaussian galaxy
         refRecord = refCatalog[recordId]
+        refWcs = self.dataset.exposure.getWcs()
         schema = refRecord.schema
         trueFlux = refRecord["truth_instFlux"]
         intrinsicShapeVector = afwTable.QuadrupoleKey(schema["truth"]).get(refRecord).getParameterVector() \
             - afwTable.QuadrupoleKey(schema["slot_PsfShape"]).get(refRecord).getParameterVector()
         intrinsicShape = afwGeom.Quadrupole(intrinsicShapeVector)
         invIntrinsicShape = self.invertQuadrupole(intrinsicShape)
+        # Assert that the measured fluxes agree with analytical expectations.
         for sigma in sfmTask.config.plugins[algName].sigmas.list() + ["Optimal"]:
             if sigma == "Optimal":
                 aperShape = afwTable.QuadrupoleKey(schema[f"{algName}_OptimalShape"]).get(refRecord)
-                invAperShape = self.invertQuadrupole(aperShape)
             else:
-                invAperShape = afwGeom.Quadrupole(1./sigma**2, 1./sigma**2, 0.0)
+                aperShape = afwGeom.Quadrupole(sigma**2, sigma**2, 0.0)
+                aperShape.transformInPlace(refWcs.linearizeSkyToPixel(refRecord.getCentroid(),
+                                                                      geom.arcseconds).getLinear())
 
+            invAperShape = self.invertQuadrupole(aperShape)
             analyticalFlux = trueFlux*(invIntrinsicShape.getDeterminantRadius()
                                        / invIntrinsicShape.convolve(invAperShape).getDeterminantRadius())**2
             for scalingFactor in sfmTask.config.plugins[algName].scalingFactors:
@@ -456,7 +460,6 @@ class GaapFluxTestCase(lsst.meas.base.tests.AlgorithmTestCase, lsst.utils.tests.
                 instFlux = refRecord.get(f"{baseName}_instFlux")
                 self.assertFloatsAlmostEqual(instFlux, analyticalFlux, rtol=5e-3)
 
-        refWcs = self.dataset.exposure.getWcs()
         measWcs = self.dataset.makePerturbedWcs(refWcs, randomSeed=15)
         measDataset = self.dataset.transform(measWcs)
         measExposure, truthCatalog = measDataset.realize(0.0, schema)
