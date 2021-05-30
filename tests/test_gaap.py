@@ -124,6 +124,9 @@ class GaapFluxTestCase(lsst.meas.base.tests.AlgorithmTestCase, lsst.utils.tests.
         gaapPlugin = lsst.meas.extensions.gaap.SingleFrameGaapFluxPlugin(gaapConfig,
                                                                          'ext_gaap_GaapFlux',
                                                                          schema, None)
+        if gaapConfig.doOptimalPhotometry:
+            afwTable.QuadrupoleKey.addFields(schema, "psfShape", "PSF shape")
+            schema.getAliasMap().set("slot_PsfShape", "psfShape")
         return gaapPlugin, schema
 
     def check(self, psfSigma=0.5, flux=1000., scalingFactors=[1.15], forced=False):
@@ -148,6 +151,8 @@ class GaapFluxTestCase(lsst.meas.base.tests.AlgorithmTestCase, lsst.utils.tests.
         algConfig.scalingFactors = scalingFactors
         algConfig.scaleByFwhm = True
         algConfig.doPsfPhotometry = True
+        # Do not turn on optimal photometry; not robust for a point-source.
+        algConfig.doOptimalPhotometry = False
 
         if forced:
             offset = geom.Extent2D(-12.3, 45.6)
@@ -242,6 +247,7 @@ class GaapFluxTestCase(lsst.meas.base.tests.AlgorithmTestCase, lsst.utils.tests.
         gaapConfig.scalingFactors = scalingFactors
         gaapConfig.sigmas = sigmas
         gaapConfig.doPsfPhotometry = True
+        gaapConfig.doOptimalPhotometry = True
 
         gaapConfig.scaleByFwhm = True
         self.assertTrue(gaapConfig.scaleByFwhm)  # Test the getter method.
@@ -250,7 +256,7 @@ class GaapFluxTestCase(lsst.meas.base.tests.AlgorithmTestCase, lsst.utils.tests.
         sfmTask = self.makeSingleFrameMeasurementTask(algName, dependencies=dependencies, config=config,
                                                       algMetadata=algMetadata)
         exposure, catalog = self.dataset.realize(0.0, sfmTask.schema)
-        # self.recordPsfShape(catalog)  # Uncomment after DM-29290 is merged.
+        self.recordPsfShape(catalog)
         sfmTask.run(catalog, exposure)
 
         for record in catalog:
@@ -258,7 +264,7 @@ class GaapFluxTestCase(lsst.meas.base.tests.AlgorithmTestCase, lsst.utils.tests.
             for scalingFactor in scalingFactors:
                 flagName = gaapConfig._getGaapResultName(scalingFactor, "flag_gaussianization", algName)
                 self.assertTrue(record[flagName])
-                for sigma in sigmas:  # ["Optimal"]  # Uncomment after DM-29290 is merged.
+                for sigma in sigmas + ["Optimal"]:
                     baseName = gaapConfig._getGaapResultName(scalingFactor, sigma, algName)
                     self.assertTrue(record[baseName + "_flag"])
                     self.assertFalse(record[baseName + "_flag_bigPsf"])
@@ -273,7 +279,7 @@ class GaapFluxTestCase(lsst.meas.base.tests.AlgorithmTestCase, lsst.utils.tests.
         with self.assertRaises(lsst.meas.base.FatalAlgorithmError):
             sfmTask.run(catalog, exposure)
 
-    def testFlags(self, sigmas=[2.5, 3.0, 4.0], scalingFactors=[1.15, 1.25, 1.4]):
+    def testFlags(self, sigmas=[2.5, 3.0, 4.0], scalingFactors=[1.15, 1.25, 1.4, 100.]):
         """Test that GAaP flags are set properly.
 
         Specifically, we test that
@@ -307,12 +313,17 @@ class GaapFluxTestCase(lsst.meas.base.tests.AlgorithmTestCase, lsst.utils.tests.
         gaapConfig = lsst.meas.extensions.gaap.SingleFrameGaapFluxConfig(sigmas=sigmas,
                                                                          scalingFactors=scalingFactors)
         gaapConfig.scaleByFwhm = True
+        gaapConfig.doOptimalPhotometry = True
 
         # Make an instance of GAaP algorithm from a config
         algName = "ext_gaap_GaapFlux"
         algorithm, schema = self.makeAlgorithm(gaapConfig)
         # Make a noiseless exposure and measurements for reference
         exposure, catalog = self.dataset.realize(0.0, schema)
+        # Record the PSF shapes if optimal photometry is performed.
+        if gaapConfig.doOptimalPhotometry:
+            self.recordPsfShape(catalog)
+
         record = catalog[0]
         algorithm.measure(record, exposure)
         seeing = exposure.getPsf().getSigma()
@@ -337,11 +348,141 @@ class GaapFluxTestCase(lsst.meas.base.tests.AlgorithmTestCase, lsst.utils.tests.
                 self.assertFalse(record[baseName+"_flag_bigPsf"])
                 self.assertFalse(record[baseName+"_flag"])
 
+        # Ensure that flag_bigPsf is set if OptimalShape is not large enough.
+        if gaapConfig.doOptimalPhotometry:
+            aperShape = afwTable.QuadrupoleKey(schema[schema.join(algName, "OptimalShape")]).get(record)
+            for scalingFactor in gaapConfig.scalingFactors:
+                targetSigma = scalingFactor*seeing
+                baseName = gaapConfig._getGaapResultName(scalingFactor, "Optimal", algName)
+                try:
+                    afwGeom.Quadrupole(aperShape.getParameterVector()-[targetSigma**2, targetSigma**2, 0.0],
+                                       normalize=True)
+                    self.assertFalse(record[baseName + "_flag_bigPsf"])
+                except InvalidParameterError:
+                    self.assertTrue(record[baseName + "_flag_bigPsf"])
+
         # Ensure that the edge flag is set for the source at the corner.
         record = catalog[2]
         algorithm.measure(record, exposure)
         self.assertTrue(record[algName + "_flag_edge"])
         self.assertFalse(record[algName + "_flag"])
+
+    def recordPsfShape(self, catalog) -> None:
+        """Record PSF shapes under the appropriate fields in ``catalog``.
+
+        This method must be called after the dataset is realized and a catalog
+        is returned by the `realize` method. It assumes that the schema is
+        non-minimal and has "psfShape_xx", "psfShape_yy" and "psfShape_xy"
+        fields setup
+
+        Parameters
+        ----------
+        catalog : `~lsst.afw.table.SourceCatalog`
+            A source catalog containing records of the simulated sources.
+        """
+        psfShapeKey = afwTable.QuadrupoleKey(catalog.schema["slot_PsfShape"])
+        for record in catalog:
+            record.set(psfShapeKey, self.dataset.psfShape)
+
+    @staticmethod
+    def invertQuadrupole(shape: afwGeom.Quadrupole) -> afwGeom.Quadrupole:
+        """Compute the Quadrupole object corresponding to the inverse matrix.
+
+        If M = [[Q.getIxx(), Q.getIxy()],
+                [Q.getIxy(), Q.getIyy()]]
+
+        for the input quadrupole Q, the returned quadrupole R corresponds to
+
+        M^{-1} = [[R.getIxx(), R.getIxy()],
+                  [R.getIxy(), R.getIyy()]].
+        """
+        invShape = afwGeom.Quadrupole(shape.getIyy(), shape.getIxx(), -shape.getIxy())
+        invShape.scale(1./shape.getDeterminantRadius()**2)
+        return invShape
+
+    def testGalaxyPhotometry(self):
+        """Test GAaP fluxes for extended sources.
+
+        Create and run a SingleFrameMeasurementTask with GAaP plugin and reuse
+        its outputs as reference for ForcedGaapFluxPlugin. In both cases,
+        the measured flux is compared with the analytical expectation.
+
+        For a Gaussian source with intrinsic shape S and intrinsic aperture W,
+        the GAaP flux is defined as (Eq. A16 of Kuijken et al. 2015)
+        :math:`\\frac{F}{2\\pi\\det(S)}\\int\\mathrm{d}x\\exp(-x^T(S^{-1}+W^{-1})x/2)`
+        :math:`F\\frac{\\det(S^{-1})}{\\det(S^{-1}+W^{-1})}`
+        """
+        algName = "ext_gaap_GaapFlux"
+        dependencies = ("base_SdssShape",)
+        sfmConfig = self.makeSingleFrameMeasurementConfig(algName, dependencies=dependencies)
+        forcedConfig = self.makeForcedMeasurementConfig(algName, dependencies=dependencies)
+        # Turn on optimal photometry explicitly
+        sfmConfig.plugins[algName].doOptimalPhotometry = True
+        forcedConfig.plugins[algName].doOptimalPhotometry = True
+
+        algMetadata = lsst.daf.base.PropertyList()
+        sfmTask = self.makeSingleFrameMeasurementTask(config=sfmConfig, algMetadata=algMetadata)
+        forcedTask = self.makeForcedMeasurementTask(config=forcedConfig, algMetadata=algMetadata,
+                                                    refSchema=sfmTask.schema)
+
+        refExposure, refCatalog = self.dataset.realize(0.0, sfmTask.schema)
+        self.recordPsfShape(refCatalog)
+        sfmTask.run(refCatalog, refExposure)
+
+        # Check if the measured values match the expectations from
+        # analytical Gaussian integrals
+        recordId = 1  # Elliptical Gaussian galaxy
+        refRecord = refCatalog[recordId]
+        schema = refRecord.schema
+        trueFlux = refRecord["truth_instFlux"]
+        intrinsicShapeVector = afwTable.QuadrupoleKey(schema["truth"]).get(refRecord).getParameterVector() \
+            - afwTable.QuadrupoleKey(schema["slot_PsfShape"]).get(refRecord).getParameterVector()
+        intrinsicShape = afwGeom.Quadrupole(intrinsicShapeVector)
+        invIntrinsicShape = self.invertQuadrupole(intrinsicShape)
+        for sigma in sfmTask.config.plugins[algName].sigmas.list() + ["Optimal"]:
+            if sigma == "Optimal":
+                aperShape = afwTable.QuadrupoleKey(schema[f"{algName}_OptimalShape"]).get(refRecord)
+                invAperShape = self.invertQuadrupole(aperShape)
+            else:
+                invAperShape = afwGeom.Quadrupole(1./sigma**2, 1./sigma**2, 0.0)
+
+            analyticalFlux = trueFlux*(invIntrinsicShape.getDeterminantRadius()
+                                       / invIntrinsicShape.convolve(invAperShape).getDeterminantRadius())**2
+            for scalingFactor in sfmTask.config.plugins[algName].scalingFactors:
+                baseName = sfmTask.plugins[algName].ConfigClass._getGaapResultName(scalingFactor,
+                                                                                   sigma, algName)
+                instFlux = refRecord.get(f"{baseName}_instFlux")
+                self.assertFloatsAlmostEqual(instFlux, analyticalFlux, rtol=5e-3)
+
+        refWcs = self.dataset.exposure.getWcs()
+        measWcs = self.dataset.makePerturbedWcs(refWcs, randomSeed=15)
+        measDataset = self.dataset.transform(measWcs)
+        measExposure, truthCatalog = measDataset.realize(0.0, schema)
+        measCatalog = forcedTask.generateMeasCat(measExposure, refCatalog, refWcs)
+        forcedTask.attachTransformedFootprints(measCatalog, refCatalog, measExposure, refWcs)
+        forcedTask.run(measCatalog, measExposure, refCatalog, refWcs)
+
+        fullTransform = afwGeom.makeWcsPairTransform(refWcs, measWcs)
+        localTransform = afwGeom.linearizeTransform(fullTransform, refRecord.getCentroid()).getLinear()
+        intrinsicShape.transformInPlace(localTransform)
+        invIntrinsicShape = self.invertQuadrupole(intrinsicShape)
+        measRecord = measCatalog[recordId]
+        # This works only for optimal aperture for now, since this is the only
+        # aperture that is defined in sky frame and transformed consistently.
+        # Pre-fixed circular apertures are defined in pixel coordinates.
+        # TODO: DM-30299 will fix this.
+        aperShape = afwTable.QuadrupoleKey(measRecord.schema[f"{algName}_OptimalShape"]).get(measRecord)
+        invAperShape = self.invertQuadrupole(aperShape)
+        analyticalFlux = trueFlux*(invIntrinsicShape.getDeterminantRadius()
+                                   / invIntrinsicShape.convolve(invAperShape).getDeterminantRadius())**2
+        for scalingFactor in forcedTask.config.plugins[algName].scalingFactors:
+            baseName = forcedTask.plugins[algName].ConfigClass._getGaapResultName(scalingFactor,
+                                                                                  sigma, algName)
+            instFlux = measRecord.get(f"{baseName}_instFlux")
+            # The measurement in the measRecord must be consistent with
+            # the measurement in the refRecord in addition to analyticalFlux.
+            self.assertFloatsAlmostEqual(instFlux, refRecord.get(f"{baseName}_instFlux"), rtol=5e-3)
+            self.assertFloatsAlmostEqual(instFlux, analyticalFlux, rtol=5e-3)
 
     def getFluxErrScaling(self, kernel, aperShape):
         """Returns the value by which the standard error has to be scaled due
@@ -364,7 +505,10 @@ class GaapFluxTestCase(lsst.meas.base.tests.AlgorithmTestCase, lsst.utils.tests.
         kernel.computeImage(kim, False)
         weight = galsim.Image(np.zeros_like(kim.array))
         aperSigma = aperShape.getDeterminantRadius()
-        gauss = galsim.Gaussian(sigma=aperSigma, flux=2*np.pi*aperSigma**2)
+        trace = aperShape.getIxx() + aperShape.getIyy()
+        distortion = galsim.Shear(e1=(aperShape.getIxx()-aperShape.getIyy())/trace,
+                                  e2=2*aperShape.getIxy()/trace)
+        gauss = galsim.Gaussian(sigma=aperSigma, flux=2*np.pi*aperSigma**2).shear(distortion)
         weight = gauss.drawImage(image=weight, scale=1.0, method='no_pixel')
         kwarr = scipy.signal.convolve2d(weight.array, kim.array, boundary='fill')
         fluxErrScaling = np.sqrt(np.sum(kwarr*kwarr))
@@ -424,6 +568,13 @@ class GaapFluxTestCase(lsst.meas.base.tests.AlgorithmTestCase, lsst.utils.tests.
                 self.assertFloatsAlmostEqual(fluxErrScaling1, analyticalValue, rtol=1e-4)
                 self.assertFloatsAlmostEqual(fluxErrScaling1, fluxErrScaling2, rtol=1e-4)
 
+            # Try with an elliptical aperture. This is a proxy for
+            # optimal aperture, since we do not actually measure anything.
+            aperShape = afwGeom.Quadrupole(8, 6, 3)
+            fluxErrScaling1 = algorithm._getFluxErrScaling(kernelAcf, aperShape)
+            fluxErrScaling2 = self.getFluxErrScaling(kernel, aperShape)
+            self.assertFloatsAlmostEqual(fluxErrScaling1, fluxErrScaling2, rtol=1e-4)
+
     @lsst.utils.tests.methodParameters(noise=(0.001, 0.01, 0.1))
     def testMonteCarlo(self, noise, recordId=1, sigmas=[3.0, 4.0], scalingFactors=[1.1, 1.15, 1.2, 1.3, 1.4]):
         """Test GAaP flux uncertainties.
@@ -446,10 +597,14 @@ class GaapFluxTestCase(lsst.meas.base.tests.AlgorithmTestCase, lsst.utils.tests.
         gaapConfig = lsst.meas.extensions.gaap.SingleFrameGaapFluxConfig(sigmas=sigmas,
                                                                          scalingFactors=scalingFactors)
         gaapConfig.scaleByFwhm = True
+        gaapConfig.doPsfPhotometry = True
+        gaapConfig.doOptimalPhotometry = True
 
         algorithm, schema = self.makeAlgorithm(gaapConfig)
         # Make a noiseless exposure and keep measurement record for reference
         exposure, catalog = self.dataset.realize(0.0, schema)
+        if gaapConfig.doOptimalPhotometry:
+            self.recordPsfShape(catalog)
         recordNoiseless = catalog[recordId]
         totalFlux = recordNoiseless["truth_instFlux"]
         algorithm.measure(recordNoiseless, exposure)
@@ -458,6 +613,8 @@ class GaapFluxTestCase(lsst.meas.base.tests.AlgorithmTestCase, lsst.utils.tests.
         catalog = afwTable.SourceCatalog(schema)
         for repeat in range(nSamples):
             exposure, cat = self.dataset.realize(noise*totalFlux, schema, randomSeed=repeat)
+            if gaapConfig.doOptimalPhotometry:
+                self.recordPsfShape(cat)
             record = cat[recordId]
             algorithm.measure(record, exposure)
             catalog.append(record)

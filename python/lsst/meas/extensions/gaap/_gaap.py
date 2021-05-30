@@ -31,11 +31,13 @@ import itertools
 import lsst.afw.detection as afwDetection
 import lsst.afw.image as afwImage
 import lsst.afw.geom as afwGeom
+import lsst.afw.table as afwTable
 import lsst.geom
 import lsst.meas.base as measBase
 from lsst.meas.base.fluxUtilities import FluxResultKey
 import lsst.pex.config as pexConfig
 from lsst.ip.diffim import ModelPsfMatchTask
+from lsst.pex.exceptions import InvalidParameterError
 import scipy.signal
 
 PLUGIN_NAME = "ext_gaap_GaapFlux"
@@ -115,6 +117,13 @@ class BaseGaapFluxConfig(measBase.BaseMeasurementPluginConfig):
             "This does not produce consistent color estimates."
     )
 
+    doOptimalPhotometry = pexConfig.Field(
+        dtype=bool,
+        default=True,
+        doc="Perform optimal photometry with near maximal SNR using an adaptive elliptical aperture? "
+            "This requires a shape algorithm to have been run previously."
+    )
+
     registerForApCorr = pexConfig.Field(
         dtype=bool,
         default=True,
@@ -142,9 +151,9 @@ class BaseGaapFluxConfig(measBase.BaseMeasurementPluginConfig):
     @property
     def _sigmas(self) -> list:
         """List of values set in ``sigmas`` along with special apertures such
-        as "PsfFlux" if applicable.
+        as "PsfFlux" and "Optimal" if applicable.
         """
-        return self.sigmas.list() + ["PsfFlux"]*self.doPsfPhotometry
+        return self.sigmas.list() + ["PsfFlux"]*self.doPsfPhotometry + ["Optimal"]*self.doOptimalPhotometry
 
     def setDefaults(self) -> None:
         # Docstring inherited
@@ -286,6 +295,25 @@ class BaseGaapFluxMixin:
                 middleName = self.ConfigClass._getGaapResultName(scalingFactor, "PsfFlux")
                 flagDefs.add(schema.join(middleName, "flag"), "Generic failure flag for this set of config "
                                                               "parameters. ")
+
+        if config.doOptimalPhotometry:
+            # Add fields to hold the optimal aperture shape
+            # OptimalPhotometry case will fetch the aperture shape from here.
+            self.optimalShapeKey = afwTable.QuadrupoleKey.addFields(schema, schema.join(name, "OptimalShape"),
+                                                                    doc="Pre-seeing aperture used for "
+                                                                        "optimal GAaP photometry")
+            for scalingFactor in config.scalingFactors:
+                baseName = self.ConfigClass._getGaapResultName(scalingFactor, "Optimal", name)
+                docstring = f"GAaP Flux with optimal aperture after multiplying the seeing by {scalingFactor}"
+                FluxResultKey.addFields(schema, name=baseName, doc=docstring)
+
+                # Remove the prefix_ since FlagHandler prepends it
+                middleName = self.ConfigClass._getGaapResultName(scalingFactor, "Optimal")
+                flagDefs.add(schema.join(middleName, "flag_bigPsf"), "The Gaussianized PSF is "
+                                                                     "bigger than the aperture")
+                flagDefs.add(schema.join(middleName, "flag"), "Generic failure flag for this set of config "
+                                                              "parameters. ")
+
         if config.registerForApCorr:
             for baseName in config.getAllGaapResultNames(name):
                 measBase.addApCorrName(baseName)
@@ -432,7 +460,7 @@ class BaseGaapFluxMixin:
     def _measureFlux(self, measRecord: lsst.afw.table.SourceRecord,
                      exposure: afwImage.Exposure, kernelAcf: afwImage.Image,
                      center: lsst.geom.Point2D, aperShape: afwGeom.Quadrupole,
-                     baseName: str, fluxScaling: float) -> None:
+                     baseName: str, fluxScaling: Optional[float] = None) -> None:
         """Measure the flux and populate the record.
 
         Parameters
@@ -458,6 +486,20 @@ class BaseGaapFluxMixin:
             scaled. If `None` or unspecified, the pre-factor in Eq. A16
             of Kuijken et al. (2015) is computed and applied.
         """
+        if fluxScaling is None:
+            # Calculate the pre-factor in Eq. A16 of Kuijken et al. (2015)
+            # to scale the flux. Include an extra factor of 0.5 to undo
+            # the normalization factor of 2 in `computeFixedMomentsFlux`.
+            try:
+                aperShape.normalize()
+                # Calculate the pre-seeing aperture.
+                # This should nominally be the same as optimalShape.
+                preseeingShape = aperShape.convolve(exposure.getPsf().computeShape())
+                fluxScaling = 0.5*preseeingShape.getArea()/aperShape.getArea()
+            except (InvalidParameterError, ZeroDivisionError):
+                self._setFlag(measRecord, baseName, "bigPsf")
+                return
+
         # Calculate the integral in Eq. A17 of Kuijken et al. (2015)
         # ``fluxErrScaling`` contains the factors not captured by
         # ``fluxScaling`` and `instFluxErr`. It is 1 theoretically
@@ -536,6 +578,13 @@ class BaseGaapFluxMixin:
                 aperShape = targetPsf.computeShape()
                 measureFlux(aperShape, baseName, fluxScaling=1)
 
+            if self.config.doOptimalPhotometry:
+                baseName = self.ConfigClass._getGaapResultName(scalingFactor, "Optimal", self.name)
+                optimalShape = measRecord.get(self.optimalShapeKey)
+                aperShape = afwGeom.Quadrupole(optimalShape.getParameterVector()
+                                               - targetPsf.computeShape().getParameterVector())
+                measureFlux(aperShape, baseName)
+
             # Iterate over pre-defined circular apertures
             for sigma in self.config.sigmas:
                 baseName = self.ConfigClass._getGaapResultName(scalingFactor, sigma, self.name)
@@ -611,9 +660,19 @@ class BaseGaapFluxMixin:
             return False
 
         allFailure = targetSigma >= max(self.config.sigmas)
+        # If measurements would fail on all circular apertures, and if
+        # optimal elliptical aperture is used, check if that would also fail.
+        if self.config.doOptimalPhotometry and allFailure:
+            optimalShape = measRecord.get(self.optimalShapeKey)
+            aperShape = afwGeom.Quadrupole(optimalShape.getParameterVector()
+                                           - [targetSigma**2, targetSigma**2, 0.0])
+            allFailure = (aperShape.getIxx() <= 0) or (aperShape.getIyy() <= 0) or (aperShape.getArea() <= 0)
 
         # Set all failure flags if allFailure is True.
         if allFailure:
+            if self.config.doOptimalPhotometry:
+                baseName = self.ConfigClass._getGaapResultName(scalingFactor, "Optimal", self.name)
+                self._setFlag(measRecord, baseName, "bigPsf")
             for sigma in self.config.sigmas:
                 baseName = self.ConfigClass._getGaapResultName(scalingFactor, sigma, self.name)
                 self._setFlag(measRecord, baseName, "bigPsf")
@@ -688,6 +747,15 @@ class SingleFrameGaapFluxPlugin(BaseGaapFluxMixin, measBase.SingleFramePlugin):
     def measure(self, measRecord, exposure):
         # Docstring inherited.
         center = measRecord.getCentroid()
+        if self.config.doOptimalPhotometry:
+            # The adaptive shape is set to post-seeing aperture.
+            # Convolve with the PSF shape to obtain pre-seeing aperture.
+            # Refer to pg. 30-31 of Kuijken et al. (2015) for this heuristic.
+            # psfShape = measRecord.getPsfShape()  # TODO: DM-30229
+            psfShape = afwTable.QuadrupoleKey(measRecord.schema["slot_PsfShape"]).get(measRecord)
+            optimalShape = measRecord.getShape().convolve(psfShape)
+            # Record the aperture used for optimal photometry
+            measRecord.set(self.optimalShapeKey, optimalShape)
         self._gaussianizeAndMeasure(measRecord, exposure, center)
 
 
@@ -733,4 +801,18 @@ class ForcedGaapFluxPlugin(BaseGaapFluxMixin, measBase.ForcedPlugin):
         # Docstring inherited.
         wcs = exposure.getWcs()
         center = wcs.skyToPixel(refWcs.pixelToSky(refRecord.getCentroid()))
+        if self.config.doOptimalPhotometry:
+            # The adaptive shape is set to post-seeing aperture.
+            # Convolve it with the PSF shape to obtain pre-seeing aperture.
+            # Refer to pg. 30-31 of Kuijken et al. (2015) for this heuristic.
+            # psfShape = refRecord.getPsfShape()  # TODO: DM-30229
+            psfShape = afwTable.QuadrupoleKey(refRecord.schema["slot_PsfShape"]).get(refRecord)
+            optimalShape = refRecord.getShape().convolve(psfShape)
+            if not (wcs == refWcs):
+                measFromSky = wcs.linearizeSkyToPixel(measRecord.getCentroid(), lsst.geom.radians)
+                skyFromRef = refWcs.linearizePixelToSky(refRecord.getCentroid(), lsst.geom.radians)
+                measFromRef = measFromSky*skyFromRef
+                optimalShape.transformInPlace(measFromRef.getLinear())
+            # Record the intrinsic aperture used for optimal photometry.
+            measRecord.set(self.optimalShapeKey, optimalShape)
         self._gaussianizeAndMeasure(measRecord, exposure, center)
