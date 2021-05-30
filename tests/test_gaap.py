@@ -443,7 +443,7 @@ class GaapFluxTestCase(lsst.meas.base.tests.AlgorithmTestCase, lsst.utils.tests.
         intrinsicShape = afwGeom.Quadrupole(intrinsicShapeVector)
         invIntrinsicShape = self.invertQuadrupole(intrinsicShape)
         # Assert that the measured fluxes agree with analytical expectations.
-        for sigma in sfmTask.config.plugins[algName].sigmas.list() + ["Optimal"]:
+        for sigma in sfmTask.config.plugins[algName]._sigmas:
             if sigma == "Optimal":
                 aperShape = afwTable.QuadrupoleKey(schema[f"{algName}_OptimalShape"]).get(refRecord)
             else:
@@ -475,7 +475,7 @@ class GaapFluxTestCase(lsst.meas.base.tests.AlgorithmTestCase, lsst.utils.tests.
 
         # Since measCatalog and refCatalog differ only by WCS, the GAaP flux
         # measured through consistent apertures must agree with each other.
-        for sigma in forcedTask.config.plugins[algName].sigmas.list() + ["Optimal"]:
+        for sigma in forcedTask.config.plugins[algName]._sigmas:
             if sigma == "Optimal":
                 aperShape = afwTable.QuadrupoleKey(measRecord.schema[f"{algName}_"
                                                                      "OptimalShape"]).get(measRecord)
