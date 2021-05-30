@@ -327,10 +327,11 @@ class GaapFluxTestCase(lsst.meas.base.tests.AlgorithmTestCase, lsst.utils.tests.
         record = catalog[0]
         algorithm.measure(record, exposure)
         seeing = exposure.getPsf().getSigma()
+        pixelScale = exposure.getWcs().getPixelScale().asArcseconds()
         # Measurement must fail (i.e., flag_bigPsf and flag must be set) if
         # sigma < scalingFactor * seeing
         # Ensure that there is at least one combination of parameters that fail
-        if not(min(gaapConfig.sigmas) < seeing*max(gaapConfig.scalingFactors)):
+        if not(min(gaapConfig.sigmas)/pixelScale < seeing*max(gaapConfig.scalingFactors)):
             raise InvalidParameterError("The config parameters do not trigger a measurement failure. "
                                         "Consider including lower values in ``sigmas`` and/or larger values "
                                         "for ``scalingFactors``")
@@ -341,7 +342,8 @@ class GaapFluxTestCase(lsst.meas.base.tests.AlgorithmTestCase, lsst.utils.tests.
         for scalingFactor, sigma in itertools.product(gaapConfig.scalingFactors, gaapConfig.sigmas):
             targetSigma = scalingFactor*seeing
             baseName = gaapConfig._getGaapResultName(scalingFactor, sigma, algName)
-            if targetSigma >= sigma:
+            # Give some leeway for the edge case.
+            if targetSigma - sigma/pixelScale >= -1e-10:
                 self.assertTrue(record[baseName+"_flag_bigPsf"])
                 self.assertTrue(record[baseName+"_flag"])
             else:
@@ -543,6 +545,7 @@ class GaapFluxTestCase(lsst.meas.base.tests.AlgorithmTestCase, lsst.utils.tests.
 
         algorithm, schema = self.makeAlgorithm(gaapConfig)
         exposure, catalog = self.dataset.realize(0.0, schema)
+        wcs = exposure.getWcs()
         record = catalog[0]
         center = self.center
         seeing = exposure.getPsf().computeShape(center).getDeterminantRadius()
@@ -555,8 +558,10 @@ class GaapFluxTestCase(lsst.meas.base.tests.AlgorithmTestCase, lsst.utils.tests.
             kernel = result.psfMatchingKernel
             kernelAcf = algorithm._computeKernelAcf(kernel)
             for sigma in gaapConfig.sigmas:
-                aperSigma2 = sigma**2 - targetSigma**2
-                aperShape = afwGeom.Quadrupole(aperSigma2, aperSigma2, 0.0)
+                intrinsicShape = afwGeom.Quadrupole(sigma**2, sigma**2, 0.0)
+                intrinsicShape.transformInPlace(wcs.linearizeSkyToPixel(center, geom.arcseconds).getLinear())
+                aperShape = afwGeom.Quadrupole(intrinsicShape.getParameterVector()
+                                               - [targetSigma**2, targetSigma**2, 0.0])
                 fluxErrScaling1 = algorithm._getFluxErrScaling(kernelAcf, aperShape)
                 fluxErrScaling2 = self.getFluxErrScaling(kernel, aperShape)
 
@@ -564,6 +569,7 @@ class GaapFluxTestCase(lsst.meas.base.tests.AlgorithmTestCase, lsst.utils.tests.
                 # where f is the scalingFactor and s is the original seeing.
                 # The integral of ACF of the kernel times the elliptical
                 # Gaussian described by aperShape is given below.
+                sigma /= wcs.getPixelScale().asArcseconds()
                 analyticalValue = ((sigma**2 - (targetSigma)**2)/(sigma**2-seeing**2))**0.5
                 self.assertFloatsAlmostEqual(fluxErrScaling1, analyticalValue, rtol=1e-4)
                 self.assertFloatsAlmostEqual(fluxErrScaling1, fluxErrScaling2, rtol=1e-4)
