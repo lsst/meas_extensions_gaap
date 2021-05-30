@@ -472,22 +472,29 @@ class GaapFluxTestCase(lsst.meas.base.tests.AlgorithmTestCase, lsst.utils.tests.
         intrinsicShape.transformInPlace(localTransform)
         invIntrinsicShape = self.invertQuadrupole(intrinsicShape)
         measRecord = measCatalog[recordId]
-        # This works only for optimal aperture for now, since this is the only
-        # aperture that is defined in sky frame and transformed consistently.
-        # Pre-fixed circular apertures are defined in pixel coordinates.
-        # TODO: DM-30299 will fix this.
-        aperShape = afwTable.QuadrupoleKey(measRecord.schema[f"{algName}_OptimalShape"]).get(measRecord)
-        invAperShape = self.invertQuadrupole(aperShape)
-        analyticalFlux = trueFlux*(invIntrinsicShape.getDeterminantRadius()
-                                   / invIntrinsicShape.convolve(invAperShape).getDeterminantRadius())**2
-        for scalingFactor in forcedTask.config.plugins[algName].scalingFactors:
-            baseName = forcedTask.plugins[algName].ConfigClass._getGaapResultName(scalingFactor,
-                                                                                  sigma, algName)
-            instFlux = measRecord.get(f"{baseName}_instFlux")
-            # The measurement in the measRecord must be consistent with
-            # the measurement in the refRecord in addition to analyticalFlux.
-            self.assertFloatsAlmostEqual(instFlux, refRecord.get(f"{baseName}_instFlux"), rtol=5e-3)
-            self.assertFloatsAlmostEqual(instFlux, analyticalFlux, rtol=5e-3)
+
+        # Since measCatalog and refCatalog differ only by WCS, the GAaP flux
+        # measured through consistent apertures must agree with each other.
+        for sigma in forcedTask.config.plugins[algName].sigmas.list() + ["Optimal"]:
+            if sigma == "Optimal":
+                aperShape = afwTable.QuadrupoleKey(measRecord.schema[f"{algName}_"
+                                                                     "OptimalShape"]).get(measRecord)
+            else:
+                aperShape = afwGeom.Quadrupole(sigma**2, sigma**2, 0.0)
+                aperShape.transformInPlace(measWcs.linearizeSkyToPixel(measRecord.getCentroid(),
+                                                                       geom.arcseconds).getLinear())
+
+            invAperShape = self.invertQuadrupole(aperShape)
+            analyticalFlux = trueFlux*(invIntrinsicShape.getDeterminantRadius()
+                                       / invIntrinsicShape.convolve(invAperShape).getDeterminantRadius())**2
+            for scalingFactor in forcedTask.config.plugins[algName].scalingFactors:
+                baseName = forcedTask.plugins[algName].ConfigClass._getGaapResultName(scalingFactor,
+                                                                                      sigma, algName)
+                instFlux = measRecord.get(f"{baseName}_instFlux")
+                # The measurement in the measRecord must be consistent with
+                # the same in the refRecord in addition to analyticalFlux.
+                self.assertFloatsAlmostEqual(instFlux, refRecord.get(f"{baseName}_instFlux"), rtol=5e-3)
+                self.assertFloatsAlmostEqual(instFlux, analyticalFlux, rtol=5e-3)
 
     def getFluxErrScaling(self, kernel, aperShape):
         """Returns the value by which the standard error has to be scaled due
