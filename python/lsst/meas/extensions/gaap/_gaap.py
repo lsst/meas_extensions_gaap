@@ -81,8 +81,8 @@ class BaseGaapFluxConfig(measBase.BaseMeasurementPluginConfig):
 
     sigmas = pexConfig.ListField(
         dtype=float,
-        default=[4.0, 5.0],
-        doc="List of sigmas (in pixels) of circular Gaussian apertures to apply on "
+        default=[0.7, 1.0],
+        doc="List of sigmas (in arcseconds) of circular Gaussian apertures to apply on "
             "pre-seeing galaxy images. These should be somewhat larger than the PSF "
             "(determined by ``scalingFactors``) to avoid measurement failures."
     )
@@ -175,8 +175,8 @@ class BaseGaapFluxConfig(measBase.BaseMeasurementPluginConfig):
         """Return the base name for GAaP fields
 
         For example, for a scaling factor of 1.15 for seeing and sigma of the
-        effective Gaussian aperture of 4.0 pixels, the returned value would be
-        "ext_gaap_GaapFlux_1_15x_4_0".
+        effective Gaussian aperture of 0.7 arcsec, the returned value would be
+        "ext_gaap_GaapFlux_1_15x_0_7".
 
         Notes
         -----
@@ -197,7 +197,7 @@ class BaseGaapFluxConfig(measBase.BaseMeasurementPluginConfig):
         name : `str`, optional
             The exact registered name of the GAaP plugin, typically either
             "ext_gaap_GaapFlux" or "undeblended_ext_gaap_GaapFlux". If ``name``
-            is None, then only the middle part (1_15x_4_0 in the example)
+            is None, then only the middle part (1_15x_0_7 in the example)
             without the leading underscore is returned.
 
         Returns
@@ -214,8 +214,8 @@ class BaseGaapFluxConfig(measBase.BaseMeasurementPluginConfig):
         """Generate the base names for all of the GAaP fields.
 
         For example, if the plugin is configured with `scalingFactors` = [1.15]
-        and `sigmas` = [4.0, 5.0] the returned expression would yield
-        ("ext_gaap_GaapFlux_1_15x_4_0", "ext_gaap_GaapFlux_1_15x_5_0") when
+        and `sigmas` = [0.7, 1.0] the returned expression would yield
+        ("ext_gaap_GaapFlux_1_15x_0_7", "ext_gaap_GaapFlux_1_15x_1_0") when
         called with ``name`` = "ext_gaap_GaapFlux". It will also generate
         "ext_gaap_GaapFlux_1_15x_PsfFlux" if `doPsfPhotometry` is True.
 
@@ -224,7 +224,7 @@ class BaseGaapFluxConfig(measBase.BaseMeasurementPluginConfig):
         name : `str`, optional
             The exact registered name of the GAaP plugin, typically either
             "ext_gaap_GaapFlux" or "undeblended_ext_gaap_GaapFlux". If ``name``
-            is None, then only the middle parts (("1_15x_4_0", "1_15x_5_0"),
+            is None, then only the middle parts (("1_15x_0_7", "1_15x_1_0"),
             for example) without the leading underscores are returned.
 
         Returns
@@ -493,7 +493,6 @@ class BaseGaapFluxMixin:
             try:
                 aperShape.normalize()
                 # Calculate the pre-seeing aperture.
-                # This should nominally be the same as optimalShape.
                 preseeingShape = aperShape.convolve(exposure.getPsf().computeShape())
                 fluxScaling = 0.5*preseeingShape.getArea()/aperShape.getArea()
             except (InvalidParameterError, ZeroDivisionError):
@@ -550,6 +549,7 @@ class BaseGaapFluxMixin:
         psf = exposure.getPsf()
         if psf is None:
             raise measBase.FatalAlgorithmError("No PSF in exposure")
+        wcs = exposure.getWcs()
 
         seeing = psf.computeShape(center).getTraceRadius()
         errorCollection = dict()
@@ -572,31 +572,34 @@ class BaseGaapFluxMixin:
             kernelAcf = self._computeKernelAcf(result.psfMatchingKernel)
 
             measureFlux = partial(self._measureFlux, measRecord, convolved, kernelAcf, center)
+            psfShape = targetPsf.computeShape()  # This is inexpensive for a GaussianPsf
 
             if self.config.doPsfPhotometry:
                 baseName = self.ConfigClass._getGaapResultName(scalingFactor, "PsfFlux", self.name)
-                aperShape = targetPsf.computeShape()
+                aperShape = psfShape
                 measureFlux(aperShape, baseName, fluxScaling=1)
 
             if self.config.doOptimalPhotometry:
                 baseName = self.ConfigClass._getGaapResultName(scalingFactor, "Optimal", self.name)
                 optimalShape = measRecord.get(self.optimalShapeKey)
                 aperShape = afwGeom.Quadrupole(optimalShape.getParameterVector()
-                                               - targetPsf.computeShape().getParameterVector())
+                                               - psfShape.getParameterVector())
                 measureFlux(aperShape, baseName)
 
             # Iterate over pre-defined circular apertures
             for sigma in self.config.sigmas:
                 baseName = self.ConfigClass._getGaapResultName(scalingFactor, sigma, self.name)
-                if sigma <= targetSigma:
+                if sigma <= targetSigma * wcs.getPixelScale(center).asArcseconds():
                     # Raise when the aperture is invalid
                     self._setFlag(measRecord, baseName, "bigPsf")
                     continue
 
-                aperSigma2 = sigma**2 - targetSigma**2
-                aperShape = afwGeom.Quadrupole(aperSigma2, aperSigma2, 0.0)
-                fluxScaling = 0.5*sigma**2/aperSigma2
-                measureFlux(aperShape, baseName, fluxScaling)
+                intrinsicShape = afwGeom.Quadrupole(sigma**2, sigma**2, 0.0)  # in sky coordinates
+                intrinsicShape.transformInPlace(wcs.linearizeSkyToPixel(center,
+                                                                        lsst.geom.arcseconds).getLinear())
+                aperShape = afwGeom.Quadrupole(intrinsicShape.getParameterVector()
+                                               - psfShape.getParameterVector())
+                measureFlux(aperShape, baseName)
 
         # Raise GaapConvolutionError before exiting the plugin
         # if the collection of errors is not empty
@@ -645,7 +648,7 @@ class BaseGaapFluxMixin:
         scalingFactor : `float`
             The multiplicative factor by which the seeing is scaled.
         targetSigma : `float`
-            Sigma of the target circular Gaussian PSF.
+            Sigma (in pixels) of the target circular Gaussian PSF.
 
         Returns
         -------
