@@ -402,7 +402,8 @@ class GaapFluxTestCase(lsst.meas.base.tests.AlgorithmTestCase, lsst.utils.tests.
         invShape.scale(1./shape.getDeterminantRadius()**2)
         return invShape
 
-    def testGalaxyPhotometry(self):
+    @lsst.utils.tests.methodParameters(gaussianizationMethod=("auto", "overlap-add", "direct", "fft"))
+    def testGalaxyPhotometry(self, gaussianizationMethod):
         """Test GAaP fluxes for extended sources.
 
         Create and run a SingleFrameMeasurementTask with GAaP plugin and reuse
@@ -421,6 +422,8 @@ class GaapFluxTestCase(lsst.meas.base.tests.AlgorithmTestCase, lsst.utils.tests.
         # Turn on optimal photometry explicitly
         sfmConfig.plugins[algName].doOptimalPhotometry = True
         forcedConfig.plugins[algName].doOptimalPhotometry = True
+        sfmConfig.plugins[algName].gaussianizationMethod = gaussianizationMethod
+        forcedConfig.plugins[algName].gaussianizationMethod = gaussianizationMethod
 
         algMetadata = lsst.daf.base.PropertyList()
         sfmTask = self.makeSingleFrameMeasurementTask(config=sfmConfig, algMetadata=algMetadata)
