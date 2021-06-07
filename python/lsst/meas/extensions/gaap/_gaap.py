@@ -169,7 +169,7 @@ class BaseGaapFluxConfig(measBase.BaseMeasurementPluginConfig):
         # TODO: DM-27482 might change these values.
         self._modelPsfMatch.kernel.active.alardNGauss = 1
         self._modelPsfMatch.kernel.active.alardDegGaussDeconv = 1
-        self._modelPsfMatch.kernel.active.alardDegGauss = [8]
+        self._modelPsfMatch.kernel.active.alardDegGauss = [4]
         self._modelPsfMatch.kernel.active.alardGaussBeta = 1.0
         self._modelPsfMatch.kernel.active.spatialKernelOrder = 0
         self.scaleByFwhm = True
