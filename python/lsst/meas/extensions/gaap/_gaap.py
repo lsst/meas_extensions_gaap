@@ -36,9 +36,9 @@ import lsst.geom
 import lsst.meas.base as measBase
 from lsst.meas.base.fluxUtilities import FluxResultKey
 import lsst.pex.config as pexConfig
-from lsst.ip.diffim import ModelPsfMatchTask
 from lsst.pex.exceptions import InvalidParameterError
 import scipy.signal
+from ._gaussianizePsf import GaussianizePsfTask
 
 PLUGIN_NAME = "ext_gaap_GaapFlux"
 
@@ -99,7 +99,7 @@ class BaseGaapFluxConfig(measBase.BaseMeasurementPluginConfig):
     )
 
     _modelPsfMatch = pexConfig.ConfigurableField(
-        target=ModelPsfMatchTask,
+        target=GaussianizePsfTask,
         doc="PSF Gaussianization Task"
     )
 
@@ -147,6 +147,15 @@ class BaseGaapFluxConfig(measBase.BaseMeasurementPluginConfig):
     @scaleByFwhm.setter
     def scaleByFwhm(self, value: bool) -> None:
         self._modelPsfMatch.kernel.active.scaleByFwhm = value
+
+    @property
+    def gaussianizationMethod(self) -> str:
+        """Type of convolution to use for PSF-Gaussianization."""
+        return self._modelPsfMatch.convolutionMethod
+
+    @gaussianizationMethod.setter
+    def gaussianizationMethod(self, value: str) -> None:
+        self._modelPsfMatch.convolutionMethod = value
 
     @property
     def _sigmas(self) -> list:
@@ -438,7 +447,8 @@ class BaseGaapFluxMixin:
         subExposure = exposure[bbox]
 
         # The size parameter of the basis has to be set dynamically.
-        result = self.psfMatchTask.run(exposure=subExposure, referencePsfModel=modelPsf,
+        result = self.psfMatchTask.run(exposure=subExposure, center=measRecord.getCentroid(),
+                                       targetPsfModel=modelPsf,
                                        basisSigmaGauss=[modelPsf.getSigma()])
         # TODO: DM-27407 will re-Gaussianize the exposure to make the PSF even
         # more Gaussian-like
