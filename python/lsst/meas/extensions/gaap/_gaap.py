@@ -438,11 +438,8 @@ class BaseGaapFluxMixin:
         subExposure = exposure[bbox]
 
         # The size parameter of the basis has to be set dynamically.
-        # `basisSigmaGauss` is a keyword argument in DM-28955.
-        task = self.psfMatchTask
-        # The modelPsfTask requires the modification made in DM-28955.
-        result = task.run(exposure=subExposure, referencePsfModel=modelPsf,
-                          basisSigmaGauss=[modelPsf.getSigma()])
+        result = self.psfMatchTask.run(exposure=subExposure, referencePsfModel=modelPsf,
+                                       basisSigmaGauss=[modelPsf.getSigma()])
         # TODO: DM-27407 will re-Gaussianize the exposure to make the PSF even
         # more Gaussian-like
 
