@@ -36,9 +36,9 @@ import lsst.geom
 import lsst.meas.base as measBase
 from lsst.meas.base.fluxUtilities import FluxResultKey
 import lsst.pex.config as pexConfig
-from lsst.ip.diffim import ModelPsfMatchTask
 from lsst.pex.exceptions import InvalidParameterError
 import scipy.signal
+from ._gaussianizePsf import GaussianizePsfTask
 
 PLUGIN_NAME = "ext_gaap_GaapFlux"
 
@@ -99,7 +99,7 @@ class BaseGaapFluxConfig(measBase.BaseMeasurementPluginConfig):
     )
 
     _modelPsfMatch = pexConfig.ConfigurableField(
-        target=ModelPsfMatchTask,
+        target=GaussianizePsfTask,
         doc="PSF Gaussianization Task"
     )
 
@@ -149,6 +149,15 @@ class BaseGaapFluxConfig(measBase.BaseMeasurementPluginConfig):
         self._modelPsfMatch.kernel.active.scaleByFwhm = value
 
     @property
+    def gaussianizationMethod(self) -> str:
+        """Type of convolution to use for PSF-Gaussianization."""
+        return self._modelPsfMatch.convolutionMethod
+
+    @gaussianizationMethod.setter
+    def gaussianizationMethod(self, value: str) -> None:
+        self._modelPsfMatch.convolutionMethod = value
+
+    @property
     def _sigmas(self) -> list:
         """List of values set in ``sigmas`` along with special apertures such
         as "PsfFlux" and "Optimal" if applicable.
@@ -160,7 +169,7 @@ class BaseGaapFluxConfig(measBase.BaseMeasurementPluginConfig):
         # TODO: DM-27482 might change these values.
         self._modelPsfMatch.kernel.active.alardNGauss = 1
         self._modelPsfMatch.kernel.active.alardDegGaussDeconv = 1
-        self._modelPsfMatch.kernel.active.alardDegGauss = [8]
+        self._modelPsfMatch.kernel.active.alardDegGauss = [4]
         self._modelPsfMatch.kernel.active.alardGaussBeta = 1.0
         self._modelPsfMatch.kernel.active.spatialKernelOrder = 0
         self.scaleByFwhm = True
@@ -419,12 +428,9 @@ class BaseGaapFluxMixin:
 
         # The kernelSize is guaranteed to be odd, say 2N+1 pixels (N=10 by
         # default). The flux inside the footprint is smeared by N pixels on
-        # either side, which is region of interest. The PSF matching sets
-        # NO_DATA mask bit in the outermost N pixels. To account for these nans
-        # along the edges, the subExposure needs to be expanded by another
-        # N pixels. So grow the bounding box initially by 2N pixels on either
-        # side.
-        pixToGrow = self.config._modelPsfMatch.kernel.active.kernelSize - 1
+        # either side, which is region of interest. So grow the bounding box
+        # initially by N pixels on either side.
+        pixToGrow = self.config._modelPsfMatch.kernel.active.kernelSize//2
         bbox.grow(pixToGrow)
 
         # The bounding box may become too big and go out of bounds for sources
@@ -438,7 +444,8 @@ class BaseGaapFluxMixin:
         subExposure = exposure[bbox]
 
         # The size parameter of the basis has to be set dynamically.
-        result = self.psfMatchTask.run(exposure=subExposure, referencePsfModel=modelPsf,
+        result = self.psfMatchTask.run(exposure=subExposure, center=measRecord.getCentroid(),
+                                       targetPsfModel=modelPsf,
                                        basisSigmaGauss=[modelPsf.getSigma()])
         # TODO: DM-27407 will re-Gaussianize the exposure to make the PSF even
         # more Gaussian-like
@@ -446,12 +453,6 @@ class BaseGaapFluxMixin:
         # Do not let the variance plane be rescaled since we handle it
         # carefully later using _getFluxScaling method
         result.psfMatchedExposure.variance.array = subExposure.variance.array
-
-        # N pixels around the edges will have NO_DATA mask bit set,
-        # where 2N+1 is the kernelSize. Set N number of pixels to erode without
-        # reusing pixToGrow, as pixToGrow can be anything in principle.
-        pixToErode = self.config._modelPsfMatch.kernel.active.kernelSize//2
-        result.psfMatchedExposure = result.psfMatchedExposure[bbox.erodedBy(pixToErode)]
         return result
 
     def _measureFlux(self, measRecord: lsst.afw.table.SourceRecord,
