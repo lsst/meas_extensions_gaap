@@ -428,12 +428,9 @@ class BaseGaapFluxMixin:
 
         # The kernelSize is guaranteed to be odd, say 2N+1 pixels (N=10 by
         # default). The flux inside the footprint is smeared by N pixels on
-        # either side, which is region of interest. The PSF matching sets
-        # NO_DATA mask bit in the outermost N pixels. To account for these nans
-        # along the edges, the subExposure needs to be expanded by another
-        # N pixels. So grow the bounding box initially by 2N pixels on either
-        # side.
-        pixToGrow = self.config._modelPsfMatch.kernel.active.kernelSize - 1
+        # either side, which is region of interest. So grow the bounding box
+        # initially by N pixels on either side.
+        pixToGrow = self.config._modelPsfMatch.kernel.active.kernelSize//2
         bbox.grow(pixToGrow)
 
         # The bounding box may become too big and go out of bounds for sources
@@ -456,12 +453,6 @@ class BaseGaapFluxMixin:
         # Do not let the variance plane be rescaled since we handle it
         # carefully later using _getFluxScaling method
         result.psfMatchedExposure.variance.array = subExposure.variance.array
-
-        # N pixels around the edges will have NO_DATA mask bit set,
-        # where 2N+1 is the kernelSize. Set N number of pixels to erode without
-        # reusing pixToGrow, as pixToGrow can be anything in principle.
-        pixToErode = self.config._modelPsfMatch.kernel.active.kernelSize//2
-        result.psfMatchedExposure = result.psfMatchedExposure[bbox.erodedBy(pixToErode)]
         return result
 
     def _measureFlux(self, measRecord: lsst.afw.table.SourceRecord,
