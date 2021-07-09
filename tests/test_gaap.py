@@ -640,7 +640,7 @@ class GaapFluxTestCase(lsst.meas.base.tests.AlgorithmTestCase, lsst.utils.tests.
             catalog.append(record)
 
         catalog = catalog.copy(deep=True)
-        for baseName in gaapConfig.getAllGaapResultNames(name="ext_gaap_GaapFlux"):
+        for baseName in gaapConfig.getAllGaapResultNames():
             instFluxKey = schema.join(baseName, "instFlux")
             instFluxErrKey = schema.join(baseName, "instFluxErr")
             instFluxMean = catalog[instFluxKey].mean()
