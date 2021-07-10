@@ -219,7 +219,7 @@ class BaseGaapFluxConfig(measBase.BaseMeasurementPluginConfig):
             return suffix
         return "_".join((name, suffix))
 
-    def getAllGaapResultNames(self, name: Optional[str] = None) -> Generator[str]:
+    def getAllGaapResultNames(self, name: Optional[str] = PLUGIN_NAME) -> Generator[str]:
         """Generate the base names for all of the GAaP fields.
 
         For example, if the plugin is configured with `scalingFactors` = [1.15]
