@@ -152,7 +152,7 @@ class GaussianizePsfTask(ModelPsfMatchTask):
                 # hood, but we call here for logging purposes.
                 convolutionMethod = scipy.signal.choose_conv_method(maskedImage.image.array,
                                                                     kernelImage.array)
-                self.log.debug(f"Using {convolutionMethod} method for convolution.")
+                self.log.debug("Using %s method for convolution.", convolutionMethod)
 
             # The order of image arrays is important if mode="same", since the
             # returned array has the same dimensions as the first argument.
