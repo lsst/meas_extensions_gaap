@@ -253,9 +253,9 @@ class GaussianizePsfTask(ModelPsfMatchTask):
             try:
                 targetPsfModel = targetPsfModel.resized(psfSize, psfSize)
             except Exception as e:
-                self.log.warn("Zero padding or clipping the target PSF model of type %s and dimensions %s"
-                              " to the science Psf dimensions %s because: %s",
-                              targetPsfModel.__class__.__name__, dimenR, dimenS, e)
+                self.log.warning("Zero padding or clipping the target PSF model of type %s and dimensions %s"
+                                 " to the science Psf dimensions %s because: %s",
+                                 targetPsfModel.__class__.__name__, dimenR, dimenS, e)
             dimenR = dimenS
 
         # Make the target kernel image, at location of science subimage.
