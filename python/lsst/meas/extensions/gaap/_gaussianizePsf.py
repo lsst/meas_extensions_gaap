@@ -328,7 +328,7 @@ class GaussianizePsfTask(ModelPsfMatchTask):
             spatialSolution = spatialkv.getKernelSolution()
         except Exception as e:
             self.log.error("ERROR: Unable to calculate psf matching kernel")
-            log.log("TRACE1." + self.log.getName() + "._solve", log.DEBUG, str(e))
+            log.log("TRACE1." + self.log.name + "._solve", log.DEBUG, str(e))
             raise e
 
         self._diagnostic(kernelCellSet, spatialSolution, spatialKernel, spatialBackground)
