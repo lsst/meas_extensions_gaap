@@ -152,7 +152,7 @@ class GaussianizePsfTask(ModelPsfMatchTask):
                 # hood, but we call here for logging purposes.
                 convolutionMethod = scipy.signal.choose_conv_method(maskedImage.image.array,
                                                                     kernelImage.array)
-                self.log.debug(f"Using {convolutionMethod} method for convolution.")
+                self.log.debug("Using %s method for convolution.", convolutionMethod)
 
             # The order of image arrays is important if mode="same", since the
             # returned array has the same dimensions as the first argument.
@@ -253,9 +253,9 @@ class GaussianizePsfTask(ModelPsfMatchTask):
             try:
                 targetPsfModel = targetPsfModel.resized(psfSize, psfSize)
             except Exception as e:
-                self.log.warn("Zero padding or clipping the target PSF model of type %s and dimensions %s"
-                              " to the science Psf dimensions %s because: %s",
-                              targetPsfModel.__class__.__name__, dimenR, dimenS, e)
+                self.log.warning("Zero padding or clipping the target PSF model of type %s and dimensions %s"
+                                 " to the science Psf dimensions %s because: %s",
+                                 targetPsfModel.__class__.__name__, dimenR, dimenS, e)
             dimenR = dimenS
 
         # Make the target kernel image, at location of science subimage.
@@ -328,7 +328,7 @@ class GaussianizePsfTask(ModelPsfMatchTask):
             spatialSolution = spatialkv.getKernelSolution()
         except Exception as e:
             self.log.error("ERROR: Unable to calculate psf matching kernel")
-            log.log("TRACE1." + self.log.getName() + "._solve", log.DEBUG, str(e))
+            log.getLogger(f"TRACE1.{self.log.name}._solve").debug("%s", e)
             raise e
 
         self._diagnostic(kernelCellSet, spatialSolution, spatialKernel, spatialBackground)
