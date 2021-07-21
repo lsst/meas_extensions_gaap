@@ -506,8 +506,17 @@ class BaseGaapFluxMixin:
         fluxResult = measBase.SdssShapeAlgorithm.computeFixedMomentsFlux(exposure.getMaskedImage(),
                                                                          aperShape, center)
 
+        instFluxErr = ((aperShape.getArea()*exposure.getVariance()[center])**0.5)*2
+        try:
+            assert(abs(instFluxErr-fluxResult.instFluxErr) < 1e-10)
+        except AssertionError:
+            pass
         # Scale the quantities in fluxResult and copy result to record
         fluxResult.instFlux *= fluxScaling
+        gain = 1.0
+        var = exposure.getVariance()[center]
+        instFluxErr = ((aperShape.getArea()*(var+fluxResult.instFlux/gain*(var>0)))**0.5)*2
+        fluxResult.instFluxErr = instFluxErr
         fluxResult.instFluxErr *= fluxScaling*fluxErrScaling
         fluxResultKey = FluxResultKey(measRecord.schema[baseName])
         fluxResultKey.set(measRecord, fluxResult)
