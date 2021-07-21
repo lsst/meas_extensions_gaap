@@ -112,7 +112,7 @@ class BaseGaapFluxConfig(measBase.BaseMeasurementPluginConfig):
 
     doPsfPhotometry = pexConfig.Field(
         dtype=bool,
-        default=False,
+        default=True,
         doc="Perform PSF photometry after PSF-Gaussianization to validate Gaussianization accuracy? "
             "This does not produce consistent color estimates."
     )
