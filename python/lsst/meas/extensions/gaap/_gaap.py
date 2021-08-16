@@ -555,7 +555,7 @@ class BaseGaapFluxMixin:
             raise measBase.FatalAlgorithmError("No PSF in exposure")
         wcs = exposure.getWcs()
 
-        seeing = psf.computeShape(center).getTraceRadius()
+        seeing = psf.computeShape(center).getDeterminantRadius()
         errorCollection = dict()
         for scalingFactor in self.config.scalingFactors:
             targetSigma = scalingFactor*seeing
