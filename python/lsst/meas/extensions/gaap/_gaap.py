@@ -28,6 +28,7 @@ __all__ = ("SingleFrameGaapFluxPlugin", "SingleFrameGaapFluxConfig",
 from typing import Generator, Optional, Union
 from functools import partial
 import itertools
+import logging
 import lsst.afw.detection as afwDetection
 import lsst.afw.image as afwImage
 import lsst.afw.geom as afwGeom
@@ -267,6 +268,9 @@ class BaseGaapFluxMixin:
     schema : `lsst.afw.table.Schema`
         The schema for the measurement output catalog. New fields will be added
         to hold measurements produced by this plugin.
+    logName : `str`, optional
+        Name to use when logging errors. This is typically provided by the
+        measurement framework.
 
     Raises
     ------
@@ -277,6 +281,7 @@ class BaseGaapFluxMixin:
     """
 
     ConfigClass = BaseGaapFluxConfig
+    hasLogName = True
 
     def __init__(self, config: BaseGaapFluxConfig, name, schema, logName=None) -> None:
         # Flag definitions for each variant of GAaP measurement
@@ -331,6 +336,7 @@ class BaseGaapFluxMixin:
             flagName = self.ConfigClass._getGaapResultName(scalingFactor, "flag_gaussianization")
             flagDefs.add(flagName, "PSF Gaussianization failed when trying to scale by this factor.")
 
+        self.log = logging.getLogger(logName)
         self.flagHandler = measBase.FlagHandler.addFields(schema, name, flagDefs)
         self.EdgeFlagKey = schema.addField(schema.join(name, "flag_edge"), type="Flag",
                                            doc="Source is too close to the edge")
@@ -695,6 +701,9 @@ class BaseGaapFluxMixin:
             Error causing failure, or `None`.
         """
         if error is not None:
+            center = measRecord.getCentroid()
+            self.log.error("Failed to solve for PSF matching kernel in GAaP for (%f, %f): %s",
+                           center.getX(), center.getY(), error)
             for scalingFactor in error.errorDict:
                 flagName = self.ConfigClass._getGaapResultName(scalingFactor, "flag_gaussianization",
                                                                self.name)
@@ -727,7 +736,8 @@ class SingleFrameGaapFluxPlugin(BaseGaapFluxMixin, measBase.SingleFramePlugin):
     metadata : `lsst.daf.base.PropertySet`
         Plugin metadata that will be attached to the output catalog.
     logName : `str`, optional
-        Name to use when logging errors.
+        Name to use when logging errors. This will be provided by the
+        measurement framework.
 
     Notes
     -----
@@ -784,7 +794,8 @@ class ForcedGaapFluxPlugin(BaseGaapFluxMixin, measBase.ForcedPlugin):
     metadata : `lsst.daf.base.PropertySet`
         Plugin metadata that will be attached to the output catalog.
     logName : `str`, optional
-        Name to use when logging errors.
+        Name to use when logging errors. This will be provided by the
+        measurement framework.
     """
     ConfigClass = ForcedGaapFluxConfig
 

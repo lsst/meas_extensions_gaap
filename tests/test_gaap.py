@@ -122,7 +122,7 @@ class GaapFluxTestCase(lsst.meas.base.tests.AlgorithmTestCase, lsst.utils.tests.
         if gaapConfig is None:
             gaapConfig = lsst.meas.extensions.gaap.SingleFrameGaapFluxConfig()
         gaapPlugin = lsst.meas.extensions.gaap.SingleFrameGaapFluxPlugin(gaapConfig,
-                                                                         'ext_gaap_GaapFlux',
+                                                                         "ext_gaap_GaapFlux",
                                                                          schema, None)
         if gaapConfig.doOptimalPhotometry:
             afwTable.QuadrupoleKey.addFields(schema, "psfShape", "PSF shape")
@@ -236,7 +236,8 @@ class GaapFluxTestCase(lsst.meas.base.tests.AlgorithmTestCase, lsst.utils.tests.
         """Test that the fail method sets the flags correctly.
 
         Set config parameters that are guaranteed to raise exceptions,
-        and check that they are handled properly by the `fail` method.
+        and check that they are handled properly by the `fail` method and that
+        expected log messages are generated.
         For failure modes not handled by the `fail` method, we test them
         in the ``testFlags`` method.
         """
@@ -257,7 +258,24 @@ class GaapFluxTestCase(lsst.meas.base.tests.AlgorithmTestCase, lsst.utils.tests.
                                                       algMetadata=algMetadata)
         exposure, catalog = self.dataset.realize(0.0, sfmTask.schema)
         self.recordPsfShape(catalog)
-        sfmTask.run(catalog, exposure)
+
+        # Expected error messages in the logs when running `sfmTask`.
+        errorMessage = [("ERROR:measurement.ext_gaap_GaapFlux:"
+                         "Failed to solve for PSF matching kernel in GAaP for (100.000000, 670.000000): "
+                         "Problematic scaling factors = 100.0 "
+                         "Errors: Exception('Unable to determine kernel sum; 0 candidates')"),
+                        ("ERROR:measurement.ext_gaap_GaapFlux:"
+                         "Failed to solve for PSF matching kernel in GAaP for (100.000000, 870.000000): "
+                         "Problematic scaling factors = 100.0 "
+                         "Errors: Exception('Unable to determine kernel sum; 0 candidates')"),
+                        ("ERROR:measurement.ext_gaap_GaapFlux:"
+                         "Failed to solve for PSF matching kernel in GAaP for (-10.000000, -20.000000): "
+                         "Problematic scaling factors = 100.0 "
+                         "Errors: Exception('Unable to determine kernel sum; 0 candidates')")]
+
+        with self.assertLogs(sfmTask.log.name, "ERROR") as cm:
+            sfmTask.run(catalog, exposure)
+        self.assertEqual(cm.output, errorMessage)
 
         for record in catalog:
             self.assertFalse(record[algName + "_flag"])
