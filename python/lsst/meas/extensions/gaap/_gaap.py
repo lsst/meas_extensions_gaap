@@ -555,10 +555,10 @@ class BaseGaapFluxMixin:
             raise measBase.FatalAlgorithmError("No PSF in exposure")
         wcs = exposure.getWcs()
 
-        seeing = psf.computeShape(center).getDeterminantRadius()
+        psfSigma = psf.computeShape(center).getDeterminantRadius()
         errorCollection = dict()
         for scalingFactor in self.config.scalingFactors:
-            targetSigma = scalingFactor*seeing
+            targetSigma = scalingFactor*psfSigma
             # If this target PSF is bound to fail for all apertures,
             # set the flags and move on without PSF Gaussianization.
             if self._isAllFailure(measRecord, scalingFactor, targetSigma):
