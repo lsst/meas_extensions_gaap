@@ -115,7 +115,8 @@ class BaseGaapFluxConfig(measBase.BaseMeasurementPluginConfig):
         dtype=bool,
         default=False,
         doc="Perform PSF photometry after PSF-Gaussianization to validate Gaussianization accuracy? "
-            "This does not produce consistent color estimates."
+            "This does not produce consistent color estimates. If setting it to `True`, it must be done so "
+            "prior to registering the plugin for aperture correction if ``registerForApCorr`` is also `True`."
     )
 
     doOptimalPhotometry = pexConfig.Field(
