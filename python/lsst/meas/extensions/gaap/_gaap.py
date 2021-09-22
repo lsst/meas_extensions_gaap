@@ -498,7 +498,7 @@ class BaseGaapFluxMixin:
             try:
                 aperShape.normalize()
                 # Calculate the pre-seeing aperture.
-                preseeingShape = aperShape.convolve(exposure.getPsf().computeShape())
+                preseeingShape = aperShape.convolve(exposure.getPsf().computeShape(center))
                 fluxScaling = 0.5*preseeingShape.getArea()/aperShape.getArea()
             except (InvalidParameterError, ZeroDivisionError):
                 self._setFlag(measRecord, baseName, "bigPsf")
@@ -577,7 +577,9 @@ class BaseGaapFluxMixin:
             kernelAcf = self._computeKernelAcf(result.psfMatchingKernel)
 
             measureFlux = partial(self._measureFlux, measRecord, convolved, kernelAcf, center)
-            psfShape = targetPsf.computeShape()  # This is inexpensive for a GaussianPsf
+            # Computing shape is inexpensive and position-independent for a
+            # GaussianPsf
+            psfShape = targetPsf.computeShape(center)
 
             if self.config.doPsfPhotometry:
                 baseName = self.ConfigClass._getGaapResultName(scalingFactor, "PsfFlux", self.name)

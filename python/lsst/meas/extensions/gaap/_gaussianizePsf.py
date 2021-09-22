@@ -119,7 +119,7 @@ class GaussianizePsfTask(ModelPsfMatchTask):
         kernelCellSet = result.kernelCellSet
         targetPsfModel = result.targetPsfModel
         fwhmScience = exposure.getPsf().computeShape(center).getDeterminantRadius()*sigma2fwhm
-        fwhmModel = targetPsfModel.computeShape().getDeterminantRadius()*sigma2fwhm
+        fwhmModel = targetPsfModel.getSigma()*sigma2fwhm
         self.log.debug("Ratio of GAaP model to science PSF = %f", fwhmModel/fwhmScience)
 
         basisList = makeKernelBasisList(self.kConfig, fwhmScience, fwhmModel,
