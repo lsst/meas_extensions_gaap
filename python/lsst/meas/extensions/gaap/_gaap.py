@@ -424,11 +424,6 @@ class BaseGaapFluxMixin:
             ``psfMatchingKernel``, the kernel that ``exposure`` was convolved
             by to obtain ``psfMatchedExposure``. Typically, the bounding box of
             ``psfMatchedExposure`` is larger than that of the footprint.
-
-        Notes
-        -----
-        During normal mode of operation, ``modelPsf`` is intended to be of the
-        type `~lsst.afw.detection.GaussianPsf`, this is not enforced.
         """
         footprint = measRecord.getFootprint()
         bbox = footprint.getBBox()
