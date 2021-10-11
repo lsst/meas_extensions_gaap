@@ -260,22 +260,21 @@ class GaapFluxTestCase(lsst.meas.base.tests.AlgorithmTestCase, lsst.utils.tests.
         self.recordPsfShape(catalog)
 
         # Expected error messages in the logs when running `sfmTask`.
-        errorMessage = [("ERROR:measurement.ext_gaap_GaapFlux:"
-                         "Failed to solve for PSF matching kernel in GAaP for (100.000000, 670.000000): "
+        errorMessage = [("Failed to solve for PSF matching kernel in GAaP for (100.000000, 670.000000): "
                          "Problematic scaling factors = 100.0 "
                          "Errors: Exception('Unable to determine kernel sum; 0 candidates')"),
-                        ("ERROR:measurement.ext_gaap_GaapFlux:"
-                         "Failed to solve for PSF matching kernel in GAaP for (100.000000, 870.000000): "
+                        ("Failed to solve for PSF matching kernel in GAaP for (100.000000, 870.000000): "
                          "Problematic scaling factors = 100.0 "
                          "Errors: Exception('Unable to determine kernel sum; 0 candidates')"),
-                        ("ERROR:measurement.ext_gaap_GaapFlux:"
-                         "Failed to solve for PSF matching kernel in GAaP for (-10.000000, -20.000000): "
+                        ("Failed to solve for PSF matching kernel in GAaP for (-10.000000, -20.000000): "
                          "Problematic scaling factors = 100.0 "
                          "Errors: Exception('Unable to determine kernel sum; 0 candidates')")]
 
-        with self.assertLogs(sfmTask.log.name, "ERROR") as cm:
+        plugin_logger_name = sfmTask.log.getChild(algName).name
+        self.assertEqual(plugin_logger_name, "lsst.measurement.ext_gaap_GaapFlux")
+        with self.assertLogs(plugin_logger_name, "ERROR") as cm:
             sfmTask.run(catalog, exposure)
-        self.assertEqual(cm.output, errorMessage)
+        self.assertEqual([record.message for record in cm.records], errorMessage)
 
         for record in catalog:
             self.assertFalse(record[algName + "_flag"])
