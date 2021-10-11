@@ -24,6 +24,7 @@ from __future__ import annotations
 
 __all__ = ("GaussianizePsfTask", "GaussianizePsfConfig")
 
+import logging
 import numpy as np
 import scipy.signal
 
@@ -34,7 +35,6 @@ from lsst.ip.diffim import diffimLib
 from lsst.ip.diffim.makeKernelBasisList import makeKernelBasisList
 from lsst.ip.diffim.modelPsfMatch import ModelPsfMatchConfig, ModelPsfMatchTask
 from lsst.ip.diffim.modelPsfMatch import sigma2fwhm, nextOddInteger
-import lsst.log as log
 import lsst.pex.config as pexConfig
 import lsst.pipe.base as pipeBase
 
@@ -329,7 +329,7 @@ class GaussianizePsfTask(ModelPsfMatchTask):
             spatialSolution = spatialkv.getKernelSolution()
         except Exception as e:
             self.log.error("ERROR: Unable to calculate psf matching kernel")
-            log.getLogger(f"TRACE1.{self.log.name}._solve").debug("%s", e)
+            logging.getLogger(f"TRACE1.{self.log.name}._solve").debug("%s", e)
             raise e
 
         self._diagnostic(kernelCellSet, spatialSolution, spatialKernel, spatialBackground)
