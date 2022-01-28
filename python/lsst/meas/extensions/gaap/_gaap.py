@@ -552,7 +552,13 @@ class BaseGaapFluxMixin:
         wcs = exposure.getWcs()
 
         psfSigma = psf.computeShape(center).getTraceRadius()
-        errorCollection = dict()
+        if not (psfSigma > 0):  # This captures nan
+            errorCollection = {str(scalingFactor): measBase.MeasurementError("PSF size cannot be measured")
+                               for scalingFactor in self.config.scalingFactor}
+            raise GaapConvolutionError(errorCollection)
+        else:
+            errorCollection = {}
+
         for scalingFactor in self.config.scalingFactors:
             targetSigma = scalingFactor*psfSigma
             # If this target PSF is bound to fail for all apertures,
