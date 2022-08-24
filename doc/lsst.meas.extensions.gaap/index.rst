@@ -44,14 +44,6 @@ Pipeline tasks
 .. lsst-pipelinetasks::
    :root: lsst.meas.extensions.gaap
 
-.. _lsst.meas.extensions.gaap-command-line-tasks:
-
-Command-line tasks
-------------------
-
-.. lsst-cmdlinetasks::
-   :root: lsst.meas.extensions.gaap
-
 .. _lsst.meas.extensions.gaap-tasks:
 
 Tasks
