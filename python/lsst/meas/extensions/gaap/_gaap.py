@@ -35,7 +35,6 @@ import lsst.afw.geom as afwGeom
 import lsst.afw.table as afwTable
 import lsst.geom
 import lsst.meas.base as measBase
-from lsst.meas.base.fluxUtilities import FluxResultKey
 import lsst.pex.config as pexConfig
 from lsst.pex.exceptions import InvalidParameterError
 import scipy.signal
@@ -44,7 +43,7 @@ from ._gaussianizePsf import GaussianizePsfTask
 PLUGIN_NAME = "ext_gaap_GaapFlux"
 
 
-class GaapConvolutionError(measBase.exceptions.MeasurementError):
+class GaapConvolutionError(measBase.MeasurementError):
     """Collection of any unexpected errors in GAaP during PSF Gaussianization.
 
     The PSF Gaussianization procedure using `modelPsfMatchTask` may throw
@@ -290,7 +289,7 @@ class BaseGaapFluxMixin:
         for scalingFactor, sigma in itertools.product(config.scalingFactors, config.sigmas):
             baseName = self.ConfigClass._getGaapResultName(scalingFactor, sigma, name)
             doc = f"GAaP Flux with {sigma} aperture after multiplying the seeing by {scalingFactor}"
-            FluxResultKey.addFields(schema, name=baseName, doc=doc)
+            measBase.FluxResultKey.addFields(schema, name=baseName, doc=doc)
 
             # Remove the prefix_ since FlagHandler prepends it
             middleName = self.ConfigClass._getGaapResultName(scalingFactor, sigma)
@@ -304,7 +303,7 @@ class BaseGaapFluxMixin:
             for scalingFactor in config.scalingFactors:
                 baseName = self.ConfigClass._getGaapResultName(scalingFactor, "PsfFlux", name)
                 doc = f"GAaP Flux with PSF aperture after multiplying the seeing by {scalingFactor}"
-                FluxResultKey.addFields(schema, name=baseName, doc=doc)
+                measBase.FluxResultKey.addFields(schema, name=baseName, doc=doc)
 
                 # Remove the prefix_ since FlagHandler prepends it
                 middleName = self.ConfigClass._getGaapResultName(scalingFactor, "PsfFlux")
@@ -320,7 +319,7 @@ class BaseGaapFluxMixin:
             for scalingFactor in config.scalingFactors:
                 baseName = self.ConfigClass._getGaapResultName(scalingFactor, "Optimal", name)
                 docstring = f"GAaP Flux with optimal aperture after multiplying the seeing by {scalingFactor}"
-                FluxResultKey.addFields(schema, name=baseName, doc=docstring)
+                measBase.FluxResultKey.addFields(schema, name=baseName, doc=docstring)
 
                 # Remove the prefix_ since FlagHandler prepends it
                 middleName = self.ConfigClass._getGaapResultName(scalingFactor, "Optimal")
@@ -511,7 +510,7 @@ class BaseGaapFluxMixin:
         # Scale the quantities in fluxResult and copy result to record
         fluxResult.instFlux *= fluxScaling
         fluxResult.instFluxErr *= fluxScaling*fluxErrScaling
-        fluxResultKey = FluxResultKey(measRecord.schema[baseName])
+        fluxResultKey = measBase.FluxResultKey(measRecord.schema[baseName])
         fluxResultKey.set(measRecord, fluxResult)
 
     def _gaussianizeAndMeasure(self, measRecord: lsst.afw.table.SourceRecord,
