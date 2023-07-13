@@ -348,7 +348,7 @@ class GaapFluxTestCase(lsst.meas.base.tests.AlgorithmTestCase, lsst.utils.tests.
         # Measurement must fail (i.e., flag_bigPsf and flag must be set) if
         # sigma < scalingFactor * seeing
         # Ensure that there is at least one combination of parameters that fail
-        if not(min(gaapConfig.sigmas)/pixelScale < seeing*max(gaapConfig.scalingFactors)):
+        if not (min(gaapConfig.sigmas)/pixelScale < seeing*max(gaapConfig.scalingFactors)):
             raise InvalidParameterError("The config parameters do not trigger a measurement failure. "
                                         "Consider including lower values in ``sigmas`` and/or larger values "
                                         "for ``scalingFactors``")
