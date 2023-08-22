@@ -31,47 +31,6 @@ You can find Jira issues for this module under the `meas_extensions_gaap <https:
 .. .. toctree::
 ..    :maxdepth: 1
 
-.. _lsst.meas.extensions.gaap-command-line-taskref:
-
-Task reference
-==============
-
-.. _lsst.meas.extensions.gaap-pipeline-tasks:
-
-Pipeline tasks
---------------
-
-.. lsst-pipelinetasks::
-   :root: lsst.meas.extensions.gaap
-
-.. _lsst.meas.extensions.gaap-tasks:
-
-Tasks
------
-
-.. lsst-tasks::
-   :root: lsst.meas.extensions.gaap
-   :toctree: tasks
-
-.. _lsst.meas.extensions.gaap-configs:
-
-Configurations
---------------
-
-.. lsst-configs::
-   :root: lsst.meas.extensions.gaap
-   :toctree: configs
-
-.. .. _lsst.meas.extensions.gaap-scripts:
-
-.. Script reference
-.. ================
-
-.. .. TODO: Add an item to this toctree for each script reference topic in the scripts subdirectory.
-
-.. .. toctree::
-..    :maxdepth: 1
-
 .. .. _lsst.meas.extensions.gaap-pyapi:
 
 Python API reference
