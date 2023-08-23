@@ -359,13 +359,22 @@ class GaapFluxTestCase(lsst.meas.base.tests.AlgorithmTestCase, lsst.utils.tests.
         for scalingFactor, sigma in itertools.product(gaapConfig.scalingFactors, gaapConfig.sigmas):
             targetSigma = scalingFactor*seeing
             baseName = gaapConfig._getGaapResultName(scalingFactor, sigma, algName)
-            # Give some leeway for the edge case.
-            if targetSigma - sigma/pixelScale >= -1e-10:
-                self.assertTrue(record[baseName+"_flag_bigPsf"])
-                self.assertTrue(record[baseName+"_flag"])
+            # Give some leeway for the edge case and compare against a small
+            # negative number instead of zero.
+            if targetSigma*pixelScale - sigma >= -2e-7:
+                self.assertTrue(record[baseName+"_flag_bigPsf"],
+                                msg=f"bigPsf flag not set for {scalingFactor=} and {sigma=}",
+                                )
+                self.assertTrue(record[baseName+"_flag"],
+                                msg=f"Flag not set for {scalingFactor=} and {sigma=}",
+                                )
             else:
-                self.assertFalse(record[baseName+"_flag_bigPsf"])
-                self.assertFalse(record[baseName+"_flag"])
+                self.assertFalse(record[baseName+"_flag_bigPsf"],
+                                 msg=f"bigPsf flag set for {scalingFactor=} and {sigma=}",
+                                 )
+                self.assertFalse(record[baseName+"_flag"],
+                                 msg=f"Flag set for {scalingFactor=} and {sigma=}",
+                                 )
 
         # Ensure that flag_bigPsf is set if OptimalShape is not large enough.
         if gaapConfig.doOptimalPhotometry:
