@@ -66,6 +66,14 @@ class GaapConvolutionError(measBase.MeasurementError):
         super().__init__(message, 1)  # the second argument does not matter.
 
 
+class NoPixelError(Exception):
+    """Raised when the footprint has no pixels.
+
+    This is caught by the measurement framework, which then calls the
+    `fail` method of the plugin without passing in a value for `error`.
+    """
+
+
 class BaseGaapFluxConfig(measBase.BaseMeasurementPluginConfig):
     """Configuration parameters for Gaussian Aperture and PSF (GAaP) plugin.
     """
@@ -340,6 +348,8 @@ class BaseGaapFluxMixin:
         self.flagHandler = measBase.FlagHandler.addFields(schema, name, flagDefs)
         self.EdgeFlagKey = schema.addField(schema.join(name, "flag_edge"), type="Flag",
                                            doc="Source is too close to the edge")
+        self.NoPixelKey = schema.addField(schema.join(name, "flag_no_pixel"), type="Flag",
+                                          doc="No pixels in the footprint")
         self._failKey = schema.addField(name + '_flag', type="Flag", doc="Set for any fatal failure")
 
         self.psfMatchTask = config._modelPsfMatch.target(config=config._modelPsfMatch)
@@ -539,16 +549,23 @@ class BaseGaapFluxMixin:
             Raised if the PSF Gaussianization fails for any of the target PSFs.
         lsst.meas.base.FatalAlgorithmError
             Raised if the Exposure does not contain a PSF model.
+        NoPixelError
+            Raised if the footprint has no pixels.
 
         Notes
         -----
         This method is the entry point to the mixin from the concrete derived
         classes.
         """
-        psf = exposure.getPsf()
-        if psf is None:
+
+        # Raise errors if the plugin would fail for this record for all
+        # scaling factors and sigmas.
+        if measRecord.getFootprint().getArea() == 0:
+            self._setFlag(measRecord, self.name, "no_pixel")
+            raise NoPixelError
+
+        if (psf := exposure.getPsf()) is None:
             raise measBase.FatalAlgorithmError("No PSF in exposure")
-        wcs = exposure.getWcs()
 
         psfSigma = psf.computeShape(center).getTraceRadius()
         if not (psfSigma > 0):  # This captures NaN and negative values.
@@ -557,6 +574,8 @@ class BaseGaapFluxMixin:
             raise GaapConvolutionError(errorCollection)
         else:
             errorCollection = dict()
+
+        wcs = exposure.getWcs()
 
         for scalingFactor in self.config.scalingFactors:
             targetSigma = scalingFactor*psfSigma

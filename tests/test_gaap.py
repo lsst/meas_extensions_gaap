@@ -389,6 +389,14 @@ class GaapFluxTestCase(lsst.meas.base.tests.AlgorithmTestCase, lsst.utils.tests.
                 except InvalidParameterError:
                     self.assertTrue(record[baseName + "_flag_bigPsf"])
 
+        # Set an empty footprint and check that no_pixels flag is set.
+        record = catalog[1]
+        record.setFootprint(afwDetection.Footprint())
+        with self.assertRaises(lsst.meas.extensions.gaap._gaap.NoPixelError):
+            algorithm.measure(record, exposure)
+        self.assertTrue(record[algName + "_flag"])
+        self.assertTrue(record[algName + "_flag_no_pixel"])
+
         # Ensure that the edge flag is set for the source at the corner.
         record = catalog[2]
         algorithm.measure(record, exposure)
