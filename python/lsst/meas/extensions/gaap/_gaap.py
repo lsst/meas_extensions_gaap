@@ -545,10 +545,9 @@ class BaseGaapFluxMixin:
         This method is the entry point to the mixin from the concrete derived
         classes.
         """
-        psf = exposure.getPsf()
-        if psf is None:
+
+        if (psf := exposure.getPsf()) is None:
             raise measBase.FatalAlgorithmError("No PSF in exposure")
-        wcs = exposure.getWcs()
 
         psfSigma = psf.computeShape(center).getTraceRadius()
         if not (psfSigma > 0):  # This captures NaN and negative values.
@@ -557,6 +556,8 @@ class BaseGaapFluxMixin:
             raise GaapConvolutionError(errorCollection)
         else:
             errorCollection = dict()
+
+        wcs = exposure.getWcs()
 
         for scalingFactor in self.config.scalingFactors:
             targetSigma = scalingFactor*psfSigma
