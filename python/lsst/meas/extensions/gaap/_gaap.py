@@ -348,6 +348,8 @@ class BaseGaapFluxMixin:
         self.flagHandler = measBase.FlagHandler.addFields(schema, name, flagDefs)
         self.EdgeFlagKey = schema.addField(schema.join(name, "flag_edge"), type="Flag",
                                            doc="Source is too close to the edge")
+        self.NoPixelKey = schema.addField(schema.join(name, "flag_no_pixel"), type="Flag",
+                                          doc="No pixels in the footprint")
         self._failKey = schema.addField(name + '_flag', type="Flag", doc="Set for any fatal failure")
 
         self.psfMatchTask = config._modelPsfMatch.target(config=config._modelPsfMatch)
