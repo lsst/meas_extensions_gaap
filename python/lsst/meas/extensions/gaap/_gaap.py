@@ -549,12 +549,20 @@ class BaseGaapFluxMixin:
             Raised if the PSF Gaussianization fails for any of the target PSFs.
         lsst.meas.base.FatalAlgorithmError
             Raised if the Exposure does not contain a PSF model.
+        NoPixelError
+            Raised if the footprint has no pixels.
 
         Notes
         -----
         This method is the entry point to the mixin from the concrete derived
         classes.
         """
+
+        # Raise errors if the plugin would fail for this record for all
+        # scaling factors and sigmas.
+        if measRecord.getFootprint().getArea() == 0:
+            self._setFlag(measRecord, self.name, "no_pixel")
+            raise NoPixelError
 
         if (psf := exposure.getPsf()) is None:
             raise measBase.FatalAlgorithmError("No PSF in exposure")
