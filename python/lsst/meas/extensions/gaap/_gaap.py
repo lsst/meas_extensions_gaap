@@ -66,6 +66,14 @@ class GaapConvolutionError(measBase.MeasurementError):
         super().__init__(message, 1)  # the second argument does not matter.
 
 
+class NoPixelError(Exception):
+    """Raised when the footprint has no pixels.
+
+    This is caught by the measurement framework, which then calls the
+    `fail` method of the plugin without passing in a value for `error`.
+    """
+
+
 class BaseGaapFluxConfig(measBase.BaseMeasurementPluginConfig):
     """Configuration parameters for Gaussian Aperture and PSF (GAaP) plugin.
     """
