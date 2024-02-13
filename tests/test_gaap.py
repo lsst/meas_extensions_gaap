@@ -262,13 +262,13 @@ class GaapFluxTestCase(lsst.meas.base.tests.AlgorithmTestCase, lsst.utils.tests.
         # Expected error messages in the logs when running `sfmTask`.
         errorMessage = [("Failed to solve for PSF matching kernel in GAaP for (100.000000, 670.000000): "
                          "Problematic scaling factors = 100.0 "
-                         "Errors: Exception('Unable to determine kernel sum; 0 candidates')"),
+                         "Errors: RuntimeError('Unable to determine kernel sum; 0 candidates')"),
                         ("Failed to solve for PSF matching kernel in GAaP for (100.000000, 870.000000): "
                          "Problematic scaling factors = 100.0 "
-                         "Errors: Exception('Unable to determine kernel sum; 0 candidates')"),
+                         "Errors: RuntimeError('Unable to determine kernel sum; 0 candidates')"),
                         ("Failed to solve for PSF matching kernel in GAaP for (-10.000000, -20.000000): "
                          "Problematic scaling factors = 100.0 "
-                         "Errors: Exception('Unable to determine kernel sum; 0 candidates')")]
+                         "Errors: RuntimeError('Unable to determine kernel sum; 0 candidates')")]
 
         plugin_logger_name = sfmTask.log.getChild(algName).name
         self.assertEqual(plugin_logger_name, "lsst.measurement.ext_gaap_GaapFlux")
