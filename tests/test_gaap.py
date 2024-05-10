@@ -142,6 +142,11 @@ class GaapFluxTestCase(lsst.meas.base.tests.AlgorithmTestCase, lsst.utils.tests.
         measConfig = TaskClass.ConfigClass()
         algName = "ext_gaap_GaapFlux"
 
+        # Remove sky coordinate plugin because we don't have the columns
+        # in the tests.
+        if "base_SkyCoord" in measConfig.plugins.names:
+            measConfig.plugins.names.remove("base_SkyCoord")
+
         measConfig.plugins.names.add(algName)
 
         if forced:
