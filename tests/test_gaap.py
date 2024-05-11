@@ -264,35 +264,69 @@ class GaapFluxTestCase(lsst.meas.base.tests.AlgorithmTestCase, lsst.utils.tests.
         exposure, catalog = self.dataset.realize(0.0, sfmTask.schema)
         self.recordPsfShape(catalog)
 
-        # Expected error messages in the logs when running `sfmTask`.
+        # Expected debug messages in the logs when running `sfmTask`.
         errorMessage = [("Failed to solve for PSF matching kernel in GAaP for (100.000000, 670.000000): "
                          "Problematic scaling factors = 100.0 "
                          "Errors: RuntimeError('Unable to determine kernel sum; 0 candidates')"),
+                        ("MeasurementError in ext_gaap_GaapFlux.measure on record 1: "
+                         "Failed to solve for PSF matching kernel"),
                         ("Failed to solve for PSF matching kernel in GAaP for (100.000000, 870.000000): "
                          "Problematic scaling factors = 100.0 "
                          "Errors: RuntimeError('Unable to determine kernel sum; 0 candidates')"),
+                        ("MeasurementError in ext_gaap_GaapFlux.measure on record 2: "
+                         "Failed to solve for PSF matching kernel"),
                         ("Failed to solve for PSF matching kernel in GAaP for (-10.000000, -20.000000): "
                          "Problematic scaling factors = 100.0 "
-                         "Errors: RuntimeError('Unable to determine kernel sum; 0 candidates')")]
+                         "Errors: RuntimeError('Unable to determine kernel sum; 0 candidates')"),
+                        ("MeasurementError in ext_gaap_GaapFlux.measure on record 3: "
+                         "Failed to solve for PSF matching kernel")]
 
+        testCatalog = catalog.copy(deep=True)
         plugin_logger_name = sfmTask.log.getChild(algName).name
         self.assertEqual(plugin_logger_name, "lsst.measurement.ext_gaap_GaapFlux")
-        with self.assertLogs(plugin_logger_name, "ERROR") as cm:
-            sfmTask.run(catalog, exposure)
+        with self.assertLogs(plugin_logger_name, "DEBUG") as cm:
+            sfmTask.run(testCatalog, exposure)
         self.assertEqual([record.message for record in cm.records], errorMessage)
 
-        for record in catalog:
-            self.assertFalse(record[algName + "_flag"])
-            for scalingFactor in scalingFactors:
-                flagName = gaapConfig._getGaapResultName(scalingFactor, "flag_gaussianization", algName)
-                self.assertTrue(record[flagName])
-                for sigma in sigmas + ["Optimal"]:
-                    baseName = gaapConfig._getGaapResultName(scalingFactor, sigma, algName)
-                    self.assertTrue(record[baseName + "_flag"])
-                    self.assertFalse(record[baseName + "_flag_bigPsf"])
+        self._checkAllFlags(
+            testCatalog,
+            algName,
+            scalingFactors,
+            sigmas,
+            gaapConfig,
+            specificFlag="flag_gaussianization",
+        )
 
-                baseName = gaapConfig._getGaapResultName(scalingFactor, "PsfFlux", algName)
-                self.assertTrue(record[baseName + "_flag"])
+        # Trigger a "not (psfSigma > 0) error":
+        exposureJunkPsf = exposure.clone()
+        testCatalog = catalog.copy(deep=True)
+        junkPsf = afwDetection.GaussianPsf(1, 1, 0)
+        exposureJunkPsf.setPsf(junkPsf)
+        sfmTask.run(testCatalog, exposureJunkPsf)
+
+        self._checkAllFlags(
+            testCatalog,
+            algName,
+            scalingFactors,
+            sigmas,
+            gaapConfig,
+            specificFlag="flag_gaussianization",
+        )
+
+        # Trigger a NoPixelError.
+        testCatalog = catalog.copy(deep=True)
+        testCatalog[0].setFootprint(afwDetection.Footprint())
+        with self.assertLogs(plugin_logger_name, "DEBUG") as cm:
+            sfmTask.run(testCatalog, exposure)
+
+        self.assertEqual(
+            cm.records[0].message,
+            "MeasurementError in ext_gaap_GaapFlux.measure on record 1: No good pixels in footprint",
+        )
+        self.assertEqual(testCatalog[f"{algName}_flag_no_pixel"][0], True)
+        self.assertEqual(testCatalog[f"{algName}_flag"][0], True)
+
+        self._checkAllFlags(testCatalog[0: 1], algName, scalingFactors, sigmas, gaapConfig, allFailFlag=True)
 
         # Try and "fail" with no PSF.
         # Since fatal exceptions are not caught by the measurement framework,
@@ -300,6 +334,29 @@ class GaapFluxTestCase(lsst.meas.base.tests.AlgorithmTestCase, lsst.utils.tests.
         exposure.setPsf(None)
         with self.assertRaises(lsst.meas.base.FatalAlgorithmError):
             sfmTask.run(catalog, exposure)
+
+    def _checkAllFlags(
+        self,
+        catalog,
+        algName,
+        scalingFactors,
+        sigmas,
+        gaapConfig,
+        specificFlag=None,
+        allFailFlag=False
+    ):
+        for record in catalog:
+            self.assertEqual(record[algName + "_flag"], allFailFlag)
+            for scalingFactor in scalingFactors:
+                if specificFlag is not None:
+                    flagName = gaapConfig._getGaapResultName(scalingFactor, specificFlag, algName)
+                    self.assertTrue(record[flagName])
+                for sigma in sigmas + ["Optimal"]:
+                    baseName = gaapConfig._getGaapResultName(scalingFactor, sigma, algName)
+                    self.assertTrue(record[baseName + "_flag"])
+                    self.assertFalse(record[baseName + "_flag_bigPsf"])
+                baseName = gaapConfig._getGaapResultName(scalingFactor, "PsfFlux", algName)
+                self.assertTrue(record[baseName + "_flag"])
 
     def testFlags(self, sigmas=[0.4, 0.5, 0.7], scalingFactors=[1.15, 1.25, 1.4, 100.]):
         """Test that GAaP flags are set properly.
