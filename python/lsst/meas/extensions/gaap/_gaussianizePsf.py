@@ -329,7 +329,7 @@ class GaussianizePsfTask(ModelPsfMatchTask):
             spatialSolution = spatialkv.getKernelSolution()
         except Exception as e:
             # This is just a debug log because it is caught by the GAaP plugin.
-            self.log.debug("ERROR: Unable to calculate psf matching kernel")
+            self.log.debug("Unable to calculate psf matching kernel")
             getTraceLogger(self.log.getChild("_solve"), 1).debug("%s", e)
             raise e
 
