@@ -44,33 +44,12 @@ PLUGIN_NAME = "ext_gaap_GaapFlux"
 
 
 class GaapConvolutionError(measBase.MeasurementError):
-    """Collection of any unexpected errors in GAaP during PSF Gaussianization.
-
-    The PSF Gaussianization procedure using `modelPsfMatchTask` may throw
-    exceptions for certain target PSFs. Such errors are caught until all
-    measurements are at least attempted. The complete traceback information
-    is lost, but unique error messages are preserved.
-
-    Parameters
-    ----------
-    errors : `dict` [`str`, `Exception`]
-        The values are exceptions raised, while the keys are the loop variables
-        (in `str` format) where the exceptions were raised.
+    """Raised when there is an error in GAaP convolution.
     """
-    def __init__(self, errors: dict[str, Exception]):
-        self.errorDict = errors
-        message = "Problematic scaling factors = "
-        message += ", ".join(errors)
-        message += " Errors: "
-        message += " | ".join(set(msg.__repr__() for msg in errors.values()))  # msg.cpp.what() misses type
-        super().__init__(message, 1)  # the second argument does not matter.
 
 
-class NoPixelError(Exception):
+class NoPixelError(measBase.MeasurementError):
     """Raised when the footprint has no pixels.
-
-    This is caught by the measurement framework, which then calls the
-    `fail` method of the plugin without passing in a value for `error`.
     """
 
 
@@ -175,7 +154,6 @@ class BaseGaapFluxConfig(measBase.BaseMeasurementPluginConfig):
 
     def setDefaults(self) -> None:
         # Docstring inherited
-        # TODO: DM-27482 might change these values.
         self._modelPsfMatch.kernel.active.alardNGauss = 1
         self._modelPsfMatch.kernel.active.alardDegGaussDeconv = 1
         self._modelPsfMatch.kernel.active.alardDegGauss = [4]
@@ -557,21 +535,28 @@ class BaseGaapFluxMixin:
         This method is the entry point to the mixin from the concrete derived
         classes.
         """
+        # First make sure we have a PSF.
+        if (psf := exposure.getPsf()) is None:
+            raise measBase.FatalAlgorithmError("No PSF in exposure")
 
         # Raise errors if the plugin would fail for this record for all
         # scaling factors and sigmas.
         if measRecord.getFootprint().getArea() == 0:
             self._setFlag(measRecord, self.name, "no_pixel")
-            raise NoPixelError
-
-        if (psf := exposure.getPsf()) is None:
-            raise measBase.FatalAlgorithmError("No PSF in exposure")
+            self._setScalingAndSigmaFlags(measRecord, self.config.scalingFactors)
+            raise NoPixelError("No good pixels in footprint", 1)
 
         psfSigma = psf.computeShape(center).getTraceRadius()
         if not (psfSigma > 0):  # This captures NaN and negative values.
-            errorCollection = {str(scalingFactor): measBase.MeasurementError("PSF size could not be measured")
-                               for scalingFactor in self.config.scalingFactor}
-            raise GaapConvolutionError(errorCollection)
+            center = measRecord.getCentroid()
+            self.log.debug("Invalid PSF sigma; cannot solve for PSF matching kernel in GAaP for (%f, %f): %s",
+                           center.getX(), center.getY(), "GAaP Convolution Error")
+            self._setScalingAndSigmaFlags(
+                measRecord,
+                self.config.scalingFactors,
+                specificFlag="flag_gaussianization",
+            )
+            raise GaapConvolutionError("Failed to solve for PSF matching kernel", 1)
         else:
             errorCollection = dict()
 
@@ -630,7 +615,19 @@ class BaseGaapFluxMixin:
         # Raise GaapConvolutionError before exiting the plugin
         # if the collection of errors is not empty
         if errorCollection:
-            raise GaapConvolutionError(errorCollection)
+            message = "Problematic scaling factors = "
+            message += ", ".join(errorCollection)
+            message += " Errors: "
+            message += " | ".join(set(msg.__repr__() for msg in errorCollection.values()))
+            center = measRecord.getCentroid()
+            self.log.debug("Failed to solve for PSF matching kernel in GAaP for (%f, %f): %s",
+                           center.getX(), center.getY(), message)
+            self._setScalingAndSigmaFlags(
+                measRecord,
+                errorCollection.keys(),
+                specificFlag="flag_gaussianization",
+            )
+            raise GaapConvolutionError("Failed to solve for PSF matching kernel", 1)
 
     @staticmethod
     def _setFlag(measRecord, baseName, flagName=None):
@@ -657,6 +654,27 @@ class BaseGaapFluxMixin:
             measRecord.set(specificFlagKey, True)
         genericFlagKey = measRecord.schema.join(baseName, "flag")
         measRecord.set(genericFlagKey, True)
+
+    def _setScalingAndSigmaFlags(self, measRecord, scalingFactors, specificFlag=None):
+        """Set a full suite of flags for scalingFactors/sigmas.
+
+        Parameters
+        ----------
+        measRecord : `~lsst.afw.table.SourceRecord`
+            Record describing the source being measured.
+        scalingFactors : `list` [`float`]
+            List of scaling factors.
+        specificFlag : `str`, optional
+            Specific type of flag to set if needed.
+        """
+        for scalingFactor in scalingFactors:
+            if specificFlag is not None:
+                flagName = self.ConfigClass._getGaapResultName(scalingFactor, specificFlag,
+                                                               self.name)
+                measRecord.set(flagName, True)
+            for sigma in self.config._sigmas:
+                baseName = self.ConfigClass._getGaapResultName(scalingFactor, sigma, self.name)
+                self._setFlag(measRecord, baseName)
 
     def _isAllFailure(self, measRecord, scalingFactor, targetSigma) -> bool:
         """Check if all measurements would result in failure.
@@ -722,18 +740,9 @@ class BaseGaapFluxMixin:
         error : `Exception`
             Error causing failure, or `None`.
         """
-        if error is not None:
-            center = measRecord.getCentroid()
-            self.log.error("Failed to solve for PSF matching kernel in GAaP for (%f, %f): %s",
-                           center.getX(), center.getY(), error)
-            for scalingFactor in error.errorDict:
-                flagName = self.ConfigClass._getGaapResultName(scalingFactor, "flag_gaussianization",
-                                                               self.name)
-                measRecord.set(flagName, True)
-                for sigma in self.config._sigmas:
-                    baseName = self.ConfigClass._getGaapResultName(scalingFactor, sigma, self.name)
-                    self._setFlag(measRecord, baseName)
-        else:
+        # We only need to set the failKey if no error was specified which
+        # signifies that the flagging was already handled.
+        if error is None:
             measRecord.set(self._failKey, True)
 
 
