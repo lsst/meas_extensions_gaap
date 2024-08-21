@@ -406,7 +406,7 @@ class GaapFluxTestCase(lsst.meas.base.tests.AlgorithmTestCase, lsst.utils.tests.
         record = catalog[0]
         algorithm.measure(record, exposure)
         seeing = exposure.getPsf().getSigma()
-        pixelScale = exposure.getWcs().getPixelScale().asArcseconds()
+        pixelScale = exposure.getWcs().getPixelScale(exposure.getBBox().getCenter()).asArcseconds()
         # Measurement must fail (i.e., flag_bigPsf and flag must be set) if
         # sigma < scalingFactor * seeing
         # Ensure that there is at least one combination of parameters that fail
@@ -678,7 +678,7 @@ class GaapFluxTestCase(lsst.meas.base.tests.AlgorithmTestCase, lsst.utils.tests.
                 # where f is the scalingFactor and s is the original seeing.
                 # The integral of ACF of the kernel times the elliptical
                 # Gaussian described by aperShape is given below.
-                sigma /= wcs.getPixelScale().asArcseconds()
+                sigma /= wcs.getPixelScale(exposure.getBBox().getCenter()).asArcseconds()
                 analyticalValue = ((sigma**2 - (targetSigma)**2)/(sigma**2-seeing**2))**0.5
                 self.assertFloatsAlmostEqual(fluxErrScaling1, analyticalValue, rtol=1e-4)
                 self.assertFloatsAlmostEqual(fluxErrScaling1, fluxErrScaling2, rtol=1e-4)
