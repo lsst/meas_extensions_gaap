@@ -16,3 +16,4 @@ python/lsst/meas/extensions/gaap/version.py
 .pytest_cache
 .coverage
 
+python/*.dist-info/
