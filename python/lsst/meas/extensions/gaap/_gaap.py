@@ -154,6 +154,7 @@ class BaseGaapFluxConfig(measBase.BaseMeasurementPluginConfig):
 
     def setDefaults(self) -> None:
         # Docstring inherited
+        super().setDefaults()
         self._modelPsfMatch.kernel.active.alardNGauss = 1
         self._modelPsfMatch.kernel.active.alardDegGauss = [4]
         self._modelPsfMatch.kernel.active.alardGaussBeta = 1.0
